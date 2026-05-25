@@ -65,6 +65,14 @@ function addFood(name, portions) {
   saveJSON(FOODS_FILE, foods);
 }
 
+function deleteFood(name) {
+  const foods = loadFoods();
+  if (!(name in foods)) return false;
+  delete foods[name];
+  saveJSON(FOODS_FILE, foods);
+  return true;
+}
+
 // ─── Users ────────────────────────────────────────────────
 function loadUsers() {
   return loadJSON(USERS_FILE);
@@ -292,6 +300,7 @@ function getGroups() {
 module.exports = {
   findFood,
   addFood,
+  deleteFood,
   getAllFoods,
   getUser,
   createUser,

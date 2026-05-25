@@ -254,6 +254,28 @@ bot.command('foods', (ctx) => {
   }
 });
 
+// ─── /editfood - Edit/delete food from database ──────────
+bot.command('editfood', (ctx) => {
+  const args = ctx.message.text.replace('/editfood', '').trim();
+  if (!args) {
+    userStates[ctx.from.id] = { action: 'edit_food_search' };
+    ctx.reply('🔍 שלח את שם המאכל שתרצה לערוך/למחוק:');
+    return;
+  }
+
+  const food = storage.findFood(args);
+  if (!food) {
+    ctx.reply(`❌ לא נמצא "${args}" במאגר.`);
+    return;
+  }
+
+  userStates[ctx.from.id] = { action: 'edit_food_value', foodName: food.name };
+  ctx.reply(
+    `📝 "${food.name}" = ${food.portions} מנות\n\n` +
+    `שלח מספר חדש לעדכון, או "מחק" למחיקה:`
+  );
+});
+
 // ─── /addfood - Add food to database ──────────────────────
 bot.command('addfood', (ctx) => {
   const args = ctx.message.text.replace('/addfood', '').trim();
@@ -403,6 +425,41 @@ bot.on('text', (ctx) => {
       return;
     }
     ctx.reply('שלח /start כדי להתחיל.');
+    return;
+  }
+
+  // Edit food - search
+  if (userStates[userId]?.action === 'edit_food_search') {
+    const food = storage.findFood(text);
+    if (!food) {
+      ctx.reply(`❌ לא נמצא "${text}" במאגר. נסה שם אחר:`);
+      return;
+    }
+    userStates[userId] = { action: 'edit_food_value', foodName: food.name };
+    ctx.reply(
+      `📝 "${food.name}" = ${food.portions} מנות\n\n` +
+      `שלח מספר חדש לעדכון, או "מחק" למחיקה:`
+    );
+    return;
+  }
+
+  // Edit food - set new value or delete
+  if (userStates[userId]?.action === 'edit_food_value') {
+    const foodName = userStates[userId].foodName;
+    if (text === 'מחק' || text === 'delete') {
+      storage.deleteFood(foodName);
+      delete userStates[userId];
+      ctx.reply(`🗑️ "${foodName}" נמחק מהמאגר.`);
+      return;
+    }
+    const newPortions = parseFloat(text);
+    if (isNaN(newPortions) || newPortions <= 0 || newPortions > 50) {
+      ctx.reply('❌ שלח מספר מנות תקין (0.5-50) או "מחק"');
+      return;
+    }
+    storage.addFood(foodName, newPortions);
+    delete userStates[userId];
+    ctx.reply(`✅ "${foodName}" עודכן ל-${newPortions} מנות.`);
     return;
   }
 
@@ -795,6 +852,7 @@ async function start() {
         { command: 'edit', description: 'ערוך/מחק רשומה' },
         { command: 'foods', description: 'מאגר מאכלים' },
         { command: 'addfood', description: 'הוסף מאכל למאגר' },
+        { command: 'editfood', description: 'ערוך/מחק מאכל מהמאגר' },
         { command: 'water', description: '💧 מעקב מים' },
         { command: 'waterlimit', description: 'שנה יעד מים יומי' },
         { command: 'reset', description: 'אפס את היום' },
