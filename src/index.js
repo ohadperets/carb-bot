@@ -384,6 +384,17 @@ bot.on('text', (ctx) => {
   // Skip commands
   if (text.startsWith('/')) return;
 
+  // "בטל" cancels any pending action
+  if (text === 'בטל' || text === 'ביטול') {
+    if (userStates[userId]) {
+      delete userStates[userId];
+      ctx.reply('✅ בוטל.');
+    } else {
+      ctx.reply('👍 אין פעולה לביטול.');
+    }
+    return;
+  }
+
   // "מים" opens water tracking
   if (text === 'מים') {
     const user = storage.getUser(userId);
