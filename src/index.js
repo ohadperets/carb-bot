@@ -842,6 +842,9 @@ async function poll() {
 }
 
 async function start() {
+  // Pull data from GitHub on fresh deploy
+  await storage.pullFromGitHub();
+
   const meRes = await fetch(`${API_BASE}/getMe`);
   const meData = await meRes.json();
   if (!meData.ok) throw new Error('getMe failed: ' + JSON.stringify(meData));

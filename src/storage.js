@@ -12,6 +12,96 @@ if (!fs.existsSync(config.dataDir)) {
   fs.mkdirSync(config.dataDir, { recursive: true });
 }
 
+// ─── GitHub sync (debounced) ───────────────────────────
+let syncTimer = null;
+const SYNC_DELAY = 10000; // 10 seconds debounce
+
+function scheduleSyncToGit() {
+  if (!config.githubToken) return;
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncToGit(), SYNC_DELAY);
+}
+
+async function syncToGit() {
+  if (!config.githubToken) return;
+  const files = ['foods.json', 'users.json', 'groups.json'];
+  try {
+    for (const file of files) {
+      const filePath = path.join(config.dataDir, file);
+      if (!fs.existsSync(filePath)) continue;
+      const content = fs.readFileSync(filePath, 'utf8');
+      await pushFileToGitHub(`data/${file}`, content);
+    }
+    console.log('✅ Data synced to GitHub');
+  } catch (err) {
+    console.error('GitHub sync error:', err.message);
+  }
+}
+
+async function pushFileToGitHub(filePath, content) {
+  const base = `https://api.github.com/repos/${config.githubRepo}/contents/${filePath}`;
+  const headers = {
+    Authorization: `token ${config.githubToken}`,
+    'Content-Type': 'application/json',
+    'User-Agent': 'carb-bot',
+  };
+
+  // Get current file SHA
+  let sha;
+  try {
+    const res = await fetch(base, { headers });
+    if (res.ok) {
+      const data = await res.json();
+      sha = data.sha;
+    }
+  } catch (e) { /* file may not exist yet */ }
+
+  // Push update
+  const body = {
+    message: `auto-sync ${filePath}`,
+    content: Buffer.from(content).toString('base64'),
+  };
+  if (sha) body.sha = sha;
+
+  const res = await fetch(base, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`GitHub API ${res.status}: ${err}`);
+  }
+}
+
+// ─── Pull data from GitHub on startup ─────────────────────
+async function pullFromGitHub() {
+  if (!config.githubToken) return;
+  const files = ['foods.json', 'users.json', 'groups.json'];
+  const headers = {
+    Authorization: `token ${config.githubToken}`,
+    'User-Agent': 'carb-bot',
+  };
+
+  for (const file of files) {
+    try {
+      const url = `https://api.github.com/repos/${config.githubRepo}/contents/data/${file}`;
+      const res = await fetch(url, { headers });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const content = Buffer.from(data.content, 'base64').toString('utf8');
+      const localPath = path.join(config.dataDir, file);
+      // Only pull if local file doesn't exist (fresh deploy)
+      if (!fs.existsSync(localPath)) {
+        fs.writeFileSync(localPath, content, 'utf8');
+        console.log(`📥 Pulled ${file} from GitHub`);
+      }
+    } catch (err) {
+      console.error(`Failed to pull ${file}:`, err.message);
+    }
+  }
+}
+
 // ─── Generic file helpers ─────────────────────────────────
 function loadJSON(file, defaultVal = {}) {
   if (!fs.existsSync(file)) return defaultVal;
@@ -20,6 +110,7 @@ function loadJSON(file, defaultVal = {}) {
 
 function saveJSON(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+  scheduleSyncToGit();
 }
 
 // ─── Foods DB (shared) ────────────────────────────────────
@@ -319,4 +410,5 @@ module.exports = {
   getWaterStatus,
   setWaterLimit,
   getAllUsersWaterStatus,
+  pullFromGitHub,
 };
