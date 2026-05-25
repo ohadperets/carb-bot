@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 console.log('ENV check - BOT_TOKEN exists:', !!process.env.BOT_TOKEN);
+console.log('All env var names:', Object.keys(process.env).join(', '));
 
 const config = {
   botToken: process.env.BOT_TOKEN,
