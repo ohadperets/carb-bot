@@ -6,7 +6,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', env === 'test' ? '.e
 const config = {
   botToken: process.env.BOT_TOKEN,
   dataDir: path.join(__dirname, '..', env === 'test' ? 'data-test' : 'data'),
-  githubToken: process.env.GITHUB_TOKEN,
+  githubToken: process.env.GH_SYNC_TOKEN,
   githubRepo: process.env.GITHUB_REPO || 'ohadperets/carb-bot',
 };
 

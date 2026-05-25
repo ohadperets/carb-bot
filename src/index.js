@@ -128,11 +128,10 @@ bot.command('limit', (ctx) => {
 
 // ─── /sync (debug) ────────────────────────────────────────
 bot.command('sync', async (ctx) => {
-  const hasToken = !!process.env.GITHUB_TOKEN;
-  const tokenLen = (process.env.GITHUB_TOKEN || '').length;
+  const hasToken = !!process.env.GH_SYNC_TOKEN;
+  const tokenLen = (process.env.GH_SYNC_TOKEN || '').length;
   const configToken = !!require('./config').githubToken;
-  const envKeys = Object.keys(process.env).filter(k => k.includes('GIT') || k.includes('TOKEN')).join(', ');
-  ctx.reply(`ENV: GITHUB_TOKEN exists=${hasToken} len=${tokenLen}\nconfig.githubToken exists=${configToken}\nRelevant env keys: ${envKeys || 'none'}`);
+  ctx.reply(`ENV: GH_SYNC_TOKEN exists=${hasToken} len=${tokenLen}\nconfig.githubToken exists=${configToken}`);
   const result = await storage.syncToGit();
   ctx.reply(`סנכרון: ${result}`);
 });

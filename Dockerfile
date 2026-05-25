@@ -7,7 +7,7 @@ RUN npm install --omit=dev
 
 COPY . .
 
-ARG GITHUB_TOKEN
-ENV GITHUB_TOKEN=${GITHUB_TOKEN}
+ARG GH_SYNC_TOKEN
+ENV GH_SYNC_TOKEN=${GH_SYNC_TOKEN}
 
 CMD ["node", "src/index.js"]
