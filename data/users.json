@@ -1,0 +1,23 @@
+{
+  "338344223": {
+    "firstName": "DD",
+    "username": "Shimishim12",
+    "dailyLimit": 10,
+    "days": {
+      "2026-05-25": {
+        "entries": [
+          {
+            "item": "במבה",
+            "portions": 2.5,
+            "time": "15:57"
+          }
+        ],
+        "total": 2.5
+      }
+    },
+    "waterLimit": 2000,
+    "water": {
+      "2026-05-25": 2000
+    }
+  }
+}
