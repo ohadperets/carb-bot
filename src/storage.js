@@ -23,7 +23,10 @@ function scheduleSyncToGit() {
 }
 
 async function syncToGit() {
-  if (!config.githubToken) return;
+  if (!config.githubToken) {
+    console.log('⚠️ No GITHUB_TOKEN, skipping sync');
+    return 'no token';
+  }
   const files = ['foods.json', 'users.json', 'groups.json'];
   try {
     for (const file of files) {
@@ -33,8 +36,10 @@ async function syncToGit() {
       await pushFileToGitHub(`data/${file}`, content);
     }
     console.log('✅ Data synced to GitHub');
+    return 'ok';
   } catch (err) {
     console.error('GitHub sync error:', err.message);
+    return `error: ${err.message}`;
   }
 }
 
@@ -411,4 +416,5 @@ module.exports = {
   setWaterLimit,
   getAllUsersWaterStatus,
   pullFromGitHub,
+  syncToGit,
 };

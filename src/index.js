@@ -126,6 +126,12 @@ bot.command('limit', (ctx) => {
   ctx.reply(`✅ המגבלה שונתה ל-${newLimit} מנות.`);
 });
 
+// ─── /sync (debug) ────────────────────────────────────────
+bot.command('sync', async (ctx) => {
+  const result = await storage.syncToGit();
+  ctx.reply(`סנכרון: ${result}`);
+});
+
 // ─── /reset ───────────────────────────────────────────────
 bot.command('reset', (ctx) => {
   if (!storage.getUser(ctx.from.id)) {
