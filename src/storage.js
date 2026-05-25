@@ -1,49 +1,102 @@
 const fs = require('fs');
 const path = require('path');
 const config = require('./config');
+const { INITIAL_FOODS } = require('./carbs');
 
-const DATA_FILE = path.join(config.dataDir, 'users.json');
+const USERS_FILE = path.join(config.dataDir, 'users.json');
+const FOODS_FILE = path.join(config.dataDir, 'foods.json');
+const GROUPS_FILE = path.join(config.dataDir, 'groups.json');
 
-function loadData() {
-  if (!fs.existsSync(DATA_FILE)) {
-    return {};
-  }
-  const raw = fs.readFileSync(DATA_FILE, 'utf8');
-  return JSON.parse(raw);
+// Ensure data directory exists
+if (!fs.existsSync(config.dataDir)) {
+  fs.mkdirSync(config.dataDir, { recursive: true });
 }
 
-function saveData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+// ─── Generic file helpers ─────────────────────────────────
+function loadJSON(file, defaultVal = {}) {
+  if (!fs.existsSync(file)) return defaultVal;
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function saveJSON(file, data) {
+  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+}
+
+// ─── Foods DB (shared) ────────────────────────────────────
+function loadFoods() {
+  const foods = loadJSON(FOODS_FILE, null);
+  if (foods === null) {
+    // First run - seed with initial foods
+    saveJSON(FOODS_FILE, INITIAL_FOODS);
+    return { ...INITIAL_FOODS };
+  }
+  return foods;
+}
+
+function findFood(name) {
+  const foods = loadFoods();
+  const normalized = name.trim().toLowerCase();
+
+  // Exact match
+  for (const [key, portions] of Object.entries(foods)) {
+    if (key.toLowerCase() === normalized) {
+      return { name: key, portions };
+    }
+  }
+
+  // Partial match (input contains a food name or food name contains input)
+  let bestMatch = null;
+  let bestLength = 0;
+  for (const [key, portions] of Object.entries(foods)) {
+    const keyLower = key.toLowerCase();
+    if (keyLower.includes(normalized) || normalized.includes(keyLower)) {
+      if (key.length > bestLength) {
+        bestMatch = { name: key, portions };
+        bestLength = key.length;
+      }
+    }
+  }
+  return bestMatch;
+}
+
+function addFood(name, portions) {
+  const foods = loadFoods();
+  foods[name] = portions;
+  saveJSON(FOODS_FILE, foods);
+}
+
+// ─── Users ────────────────────────────────────────────────
+function loadUsers() {
+  return loadJSON(USERS_FILE);
+}
+
+function saveUsers(data) {
+  saveJSON(USERS_FILE, data);
 }
 
 function getUser(userId) {
-  const data = loadData();
+  const data = loadUsers();
   return data[userId] || null;
 }
 
-function ensureUser(userId, firstName, username) {
-  const data = loadData();
-  if (!data[userId]) {
-    // Determine limit based on user ID
-    const limit = config.defaultLimits[userId] || config.defaultLimit;
-    data[userId] = {
-      firstName: firstName || '',
-      username: username || '',
-      dailyLimit: limit,
-      days: {},
-    };
-    saveData(data);
-  }
+function createUser(userId, firstName, dailyLimit) {
+  const data = loadUsers();
+  data[userId] = {
+    firstName: firstName || '',
+    dailyLimit,
+    days: {},
+  };
+  saveUsers(data);
   return data[userId];
 }
 
 function getTodayKey() {
-  const now = new Date();
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
 function addPortions(userId, itemName, portions) {
-  const data = loadData();
+  const data = loadUsers();
   const user = data[userId];
   if (!user) return null;
 
@@ -55,18 +108,18 @@ function addPortions(userId, itemName, portions) {
   const entry = {
     item: itemName,
     portions,
-    time: new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }),
+    time: new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' }),
   };
 
   user.days[today].entries.push(entry);
   user.days[today].total += portions;
-  saveData(data);
+  saveUsers(data);
 
   return user.days[today];
 }
 
 function getTodayStatus(userId) {
-  const data = loadData();
+  const data = loadUsers();
   const user = data[userId];
   if (!user) return null;
 
@@ -81,51 +134,66 @@ function getTodayStatus(userId) {
   };
 }
 
-function getHistory(userId, numDays = 7) {
-  const data = loadData();
-  const user = data[userId];
-  if (!user) return null;
+function getAllUsersStatus() {
+  const data = loadUsers();
+  const results = [];
+  const today = getTodayKey();
 
-  const history = [];
-  for (let i = 0; i < numDays; i++) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    const dayData = user.days[key] || { entries: [], total: 0 };
-    history.push({
-      date: key,
+  for (const [userId, user] of Object.entries(data)) {
+    const dayData = user.days[today] || { entries: [], total: 0 };
+    results.push({
+      userId,
+      firstName: user.firstName,
       total: dayData.total,
       limit: user.dailyLimit,
-      entries: dayData.entries,
+      remaining: user.dailyLimit - dayData.total,
+      success: dayData.total <= user.dailyLimit,
     });
   }
-  return history;
+  return results;
 }
 
 function setUserLimit(userId, newLimit) {
-  const data = loadData();
+  const data = loadUsers();
   if (!data[userId]) return false;
   data[userId].dailyLimit = newLimit;
-  saveData(data);
+  saveUsers(data);
   return true;
 }
 
 function resetToday(userId) {
-  const data = loadData();
+  const data = loadUsers();
   if (!data[userId]) return false;
   const today = getTodayKey();
   data[userId].days[today] = { entries: [], total: 0 };
-  saveData(data);
+  saveUsers(data);
   return true;
 }
 
+// ─── Groups (for scheduled messages) ─────────────────────
+function saveGroup(chatId) {
+  const groups = loadJSON(GROUPS_FILE, []);
+  if (!groups.includes(chatId)) {
+    groups.push(chatId);
+    saveJSON(GROUPS_FILE, groups);
+  }
+}
+
+function getGroups() {
+  return loadJSON(GROUPS_FILE, []);
+}
+
 module.exports = {
-  ensureUser,
+  findFood,
+  addFood,
   getUser,
+  createUser,
   addPortions,
   getTodayStatus,
-  getHistory,
+  getAllUsersStatus,
   setUserLimit,
   resetToday,
   getTodayKey,
+  saveGroup,
+  getGroups,
 };
