@@ -464,8 +464,8 @@ bot.on('text', (ctx) => {
       return;
     }
     const newPortions = parseFloat(text);
-    if (isNaN(newPortions) || newPortions <= 0 || newPortions > 50) {
-      ctx.reply('❌ שלח מספר מנות תקין (0.5-50) או "מחק"');
+    if (isNaN(newPortions) || newPortions < 0 || newPortions > 50) {
+      ctx.reply('❌ שלח מספר מנות תקין (0-50) או "מחק"');
       return;
     }
     storage.addFood(foodName, newPortions);
@@ -483,8 +483,8 @@ bot.on('text', (ctx) => {
 
   if (userStates[userId]?.action === 'add_food_portions_only') {
     const portions = parseFloat(text);
-    if (isNaN(portions) || portions <= 0 || portions > 50) {
-      ctx.reply('❌ שלח מספר מנות תקין (0.5-50)');
+    if (isNaN(portions) || portions < 0 || portions > 50) {
+      ctx.reply('❌ שלח מספר מנות תקין (0-50)');
       return;
     }
     const foodName = userStates[userId].foodName;
@@ -497,8 +497,8 @@ bot.on('text', (ctx) => {
   // Check if waiting for portions for new food
   if (userStates[userId]?.action === 'add_food_portions') {
     const portions = parseFloat(text);
-    if (isNaN(portions) || portions <= 0 || portions > 50) {
-      ctx.reply('❌ שלח מספר מנות תקין (0.5-50)');
+    if (isNaN(portions) || portions < 0 || portions > 50) {
+      ctx.reply('❌ שלח מספר מנות תקין (0-50)');
       return;
     }
     const foodName = userStates[userId].foodName;
@@ -559,7 +559,7 @@ bot.on('text', (ctx) => {
     if (parts.length >= 2) {
       // Edit: "2 3" = change entry 2 to 3 portions
       const newPortions = parseFloat(parts[1]);
-      if (isNaN(newPortions) || newPortions <= 0 || newPortions > 50) {
+      if (isNaN(newPortions) || newPortions < 0 || newPortions > 50) {
         ctx.reply('❌ מספר מנות לא תקין');
         return;
       }
