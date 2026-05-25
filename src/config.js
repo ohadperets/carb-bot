@@ -1,8 +1,11 @@
-require('dotenv').config();
+const path = require('path');
+
+const env = process.env.NODE_ENV || 'production';
+require('dotenv').config({ path: path.join(__dirname, '..', env === 'test' ? '.env.test' : '.env') });
 
 const config = {
   botToken: process.env.BOT_TOKEN,
-  dataDir: require('path').join(__dirname, '..', 'data'),
+  dataDir: path.join(__dirname, '..', env === 'test' ? 'data-test' : 'data'),
 };
 
 module.exports = config;

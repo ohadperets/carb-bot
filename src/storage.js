@@ -148,6 +148,7 @@ function getAllUsersStatus() {
       limit: user.dailyLimit,
       remaining: user.dailyLimit - dayData.total,
       success: dayData.total <= user.dailyLimit,
+      entries: dayData.entries,
     });
   }
   return results;
@@ -161,13 +162,118 @@ function setUserLimit(userId, newLimit) {
   return true;
 }
 
+function deleteEntry(userId, index) {
+  const data = loadUsers();
+  const user = data[userId];
+  if (!user) return null;
+
+  const today = getTodayKey();
+  const dayData = user.days[today];
+  if (!dayData || !dayData.entries[index]) return null;
+
+  const removed = dayData.entries.splice(index, 1)[0];
+  dayData.total -= removed.portions;
+  saveUsers(data);
+  return removed;
+}
+
+function editEntry(userId, index, newPortions) {
+  const data = loadUsers();
+  const user = data[userId];
+  if (!user) return null;
+
+  const today = getTodayKey();
+  const dayData = user.days[today];
+  if (!dayData || !dayData.entries[index]) return null;
+
+  const entry = dayData.entries[index];
+  const diff = newPortions - entry.portions;
+  entry.portions = newPortions;
+  dayData.total += diff;
+  saveUsers(data);
+  return entry;
+}
+
+function getAllFoods() {
+  return loadFoods();
+}
+
 function resetToday(userId) {
   const data = loadUsers();
   if (!data[userId]) return false;
   const today = getTodayKey();
   data[userId].days[today] = { entries: [], total: 0 };
+  if (data[userId].water && data[userId].water[today]) {
+    data[userId].water[today] = 0;
+  }
   saveUsers(data);
   return true;
+}
+
+// ─── Water tracking ──────────────────────────────────────
+function addWater(userId, ml) {
+  const data = loadUsers();
+  const user = data[userId];
+  if (!user) return null;
+
+  if (!user.water) user.water = {};
+  if (!user.waterLimit) user.waterLimit = 2000;
+
+  const today = getTodayKey();
+  user.water[today] = Math.max(0, (user.water[today] || 0) + ml);
+  saveUsers(data);
+  return { total: user.water[today], limit: user.waterLimit };
+}
+
+function resetWater(userId) {
+  const data = loadUsers();
+  const user = data[userId];
+  if (!user) return false;
+
+  const today = getTodayKey();
+  if (!user.water) user.water = {};
+  user.water[today] = 0;
+  saveUsers(data);
+  return true;
+}
+
+function getWaterStatus(userId) {
+  const data = loadUsers();
+  const user = data[userId];
+  if (!user) return null;
+
+  const today = getTodayKey();
+  const total = (user.water && user.water[today]) || 0;
+  const limit = user.waterLimit || 2000;
+  return { total, limit, remaining: limit - total };
+}
+
+function setWaterLimit(userId, ml) {
+  const data = loadUsers();
+  if (!data[userId]) return false;
+  data[userId].waterLimit = ml;
+  saveUsers(data);
+  return true;
+}
+
+function getAllUsersWaterStatus() {
+  const data = loadUsers();
+  const results = [];
+  const today = getTodayKey();
+
+  for (const [userId, user] of Object.entries(data)) {
+    const total = (user.water && user.water[today]) || 0;
+    const limit = user.waterLimit || 2000;
+    results.push({
+      userId,
+      firstName: user.firstName,
+      total,
+      limit,
+      remaining: limit - total,
+      success: total >= limit,
+    });
+  }
+  return results;
 }
 
 // ─── Groups (for scheduled messages) ─────────────────────
@@ -186,14 +292,22 @@ function getGroups() {
 module.exports = {
   findFood,
   addFood,
+  getAllFoods,
   getUser,
   createUser,
   addPortions,
   getTodayStatus,
   getAllUsersStatus,
   setUserLimit,
+  deleteEntry,
+  editEntry,
   resetToday,
   getTodayKey,
   saveGroup,
   getGroups,
+  addWater,
+  resetWater,
+  getWaterStatus,
+  setWaterLimit,
+  getAllUsersWaterStatus,
 };
