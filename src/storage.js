@@ -477,6 +477,51 @@ function getAllUsersPeriodStats(days) {
   return results;
 }
 
+// ─── Google Fit tokens ───────────────────────────────────
+function saveGoogleTokens(userId, tokens) {
+  const data = loadUsers();
+  if (!data[userId]) return false;
+  data[userId].googleTokens = tokens;
+  saveUsers(data);
+  return true;
+}
+
+function getGoogleTokens(userId) {
+  const data = loadUsers();
+  if (!data[userId]) return null;
+  return data[userId].googleTokens || null;
+}
+
+// ─── Steps tracking ─────────────────────────────────────
+function saveSteps(userId, date, steps) {
+  const data = loadUsers();
+  if (!data[userId]) return false;
+  if (!data[userId].steps) data[userId].steps = {};
+  data[userId].steps[date] = steps;
+  saveUsers(data);
+  return true;
+}
+
+function getSteps(userId, date) {
+  const data = loadUsers();
+  if (!data[userId] || !data[userId].steps) return 0;
+  return data[userId].steps[date] || 0;
+}
+
+function getStepsGoal(userId) {
+  const data = loadUsers();
+  if (!data[userId]) return 10000;
+  return data[userId].stepsGoal || 10000;
+}
+
+function setStepsGoal(userId, goal) {
+  const data = loadUsers();
+  if (!data[userId]) return false;
+  data[userId].stepsGoal = goal;
+  saveUsers(data);
+  return true;
+}
+
 module.exports = {
   findFood,
   addFood,
@@ -500,6 +545,12 @@ module.exports = {
   setWaterLimit,
   getAllUsersWaterStatus,
   getAllUsersPeriodStats,
+  saveGoogleTokens,
+  getGoogleTokens,
+  saveSteps,
+  getSteps,
+  getStepsGoal,
+  setStepsGoal,
   pullFromCloud,
   syncToCloud,
 };

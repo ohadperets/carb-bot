@@ -1,9 +1,11 @@
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
+const http = require('http');
 const { Telegraf, Markup } = require('telegraf');
 const cron = require('node-cron');
 const config = require('./config');
 const storage = require('./storage');
+const googlefit = require('./googlefit');
 
 if (!config.botToken) {
   console.error('ERROR: BOT_TOKEN is not set');
@@ -92,7 +94,7 @@ bot.start(async (ctx) => {
 });
 
 // ─── /status ──────────────────────────────────────────────
-bot.command('status', (ctx) => {
+bot.command('status', async (ctx) => {
   const user = storage.getUser(ctx.from.id);
   if (!user) {
     ctx.reply('שלח /start כדי להתחיל.');
@@ -103,6 +105,21 @@ bot.command('status', (ctx) => {
   const waterStatus = storage.getWaterStatus(ctx.from.id);
   let msg = formatStatus(ctx.from.first_name, status);
   msg += '\n\n' + formatWaterStatus(ctx.from.first_name, waterStatus);
+
+  // Add steps if Google Fit is connected
+  const tokens = storage.getGoogleTokens(ctx.from.id);
+  if (tokens) {
+    const steps = await googlefit.fetchTodaySteps(ctx.from.id);
+    if (steps !== null) {
+      const goal = storage.getStepsGoal(ctx.from.id);
+      const pct = Math.min(Math.round((steps / goal) * 100), 100);
+      const filled = Math.round(pct / 10);
+      const bar = '🟩'.repeat(filled) + '⬜'.repeat(10 - filled);
+      const emoji = steps >= goal ? '🏆' : '🚶';
+      msg += `\n\n${emoji} צעדים: ${steps.toLocaleString()}/${goal.toLocaleString()}\n${bar} ${pct}%`;
+    }
+  }
+
   ctx.reply(msg);
 });
 
@@ -345,6 +362,73 @@ bot.command('waterlimit', (ctx) => {
   }
   storage.setWaterLimit(ctx.from.id, newLimit);
   ctx.reply(`✅ יעד המים שונה ל-${newLimit}ml (${(newLimit / 1000).toFixed(1)}L)`);
+});
+
+// ─── /connectfit - Link Google Fit ────────────────────────
+bot.command('connectfit', (ctx) => {
+  if (!config.googleClientId) {
+    ctx.reply('❌ Google Fit לא מוגדר.');
+    return;
+  }
+  const tokens = storage.getGoogleTokens(ctx.from.id);
+  if (tokens) {
+    ctx.reply('✅ Google Fit כבר מחובר!\nלניתוק: /disconnectfit');
+    return;
+  }
+  const url = googlefit.getAuthUrl(ctx.from.id);
+  ctx.reply(
+    '🏃 חיבור Google Fit\n\n' +
+    'לחץ על הקישור כדי לאשר גישה לצעדים:\n\n' +
+    `[🔗 התחבר ל-Google Fit](${url})`,
+    { parse_mode: 'Markdown', disable_web_page_preview: true }
+  );
+});
+
+// ─── /disconnectfit - Unlink Google Fit ───────────────────
+bot.command('disconnectfit', (ctx) => {
+  storage.saveGoogleTokens(ctx.from.id, null);
+  ctx.reply('✅ Google Fit נותק.');
+});
+
+// ─── /steps - Show today's steps ──────────────────────────
+bot.command('steps', async (ctx) => {
+  const tokens = storage.getGoogleTokens(ctx.from.id);
+  if (!tokens) {
+    ctx.reply('❌ Google Fit לא מחובר.\nשלח /connectfit לחיבור.');
+    return;
+  }
+  const steps = await googlefit.fetchTodaySteps(ctx.from.id);
+  if (steps === null) {
+    ctx.reply('❌ שגיאה בקריאת צעדים. נסה /connectfit מחדש.');
+    return;
+  }
+  const goal = storage.getStepsGoal(ctx.from.id);
+  const pct = Math.min(Math.round((steps / goal) * 100), 100);
+  const filled = Math.round(pct / 10);
+  const bar = '🟩'.repeat(filled) + '⬜'.repeat(10 - filled);
+  const emoji = steps >= goal ? '🏆' : '🚶';
+  ctx.reply(
+    `${emoji} צעדים היום: ${steps.toLocaleString()}/${goal.toLocaleString()}\n` +
+    `${bar} ${pct}%` +
+    (steps >= goal ? '\n\n🎉 עמדת ביעד הצעדים! 💪' : '')
+  );
+});
+
+// ─── /stepsgoal - Set steps goal ──────────────────────────
+bot.command('stepsgoal', (ctx) => {
+  const args = ctx.message.text.split(' ');
+  if (args.length < 2) {
+    const goal = storage.getStepsGoal(ctx.from.id);
+    ctx.reply(`🎯 יעד צעדים יומי: ${goal.toLocaleString()}\nלשינוי: /stepsgoal <מספר>`);
+    return;
+  }
+  const goal = parseInt(args[1]);
+  if (isNaN(goal) || goal < 1000 || goal > 50000) {
+    ctx.reply('❌ מספר לא תקין (1,000-50,000)');
+    return;
+  }
+  storage.setStepsGoal(ctx.from.id, goal);
+  ctx.reply(`✅ יעד הצעדים שונה ל-${goal.toLocaleString()}`);
 });
 
 // ─── Water button callbacks ───────────────────────────────
@@ -938,6 +1022,55 @@ async function start() {
   // Pull data from cloud on fresh deploy
   await storage.pullFromCloud();
 
+  // Start HTTP server for OAuth callback
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url, `http://localhost:${config.port}`);
+
+    if (url.pathname === '/oauth/callback') {
+      const code = url.searchParams.get('code');
+      const userId = url.searchParams.get('state');
+
+      if (!code || !userId) {
+        res.writeHead(400);
+        res.end('Missing code or state');
+        return;
+      }
+
+      try {
+        const tokens = await googlefit.exchangeCode(code);
+        storage.saveGoogleTokens(userId, {
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          expiry: Date.now() + (tokens.expires_in * 1000),
+        });
+
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<h1>✅ Google Fit מחובר!</h1><p>אפשר לסגור את הדף ולחזור לטלגרם.</p>');
+
+        // Notify user in Telegram
+        await sendMessage(userId, '✅ Google Fit חובר בהצלחה!\n\nשלח /steps לראות את הצעדים שלך.');
+      } catch (err) {
+        console.error('OAuth error:', err.message);
+        res.writeHead(500);
+        res.end('OAuth error: ' + err.message);
+      }
+      return;
+    }
+
+    if (url.pathname === '/health') {
+      res.writeHead(200);
+      res.end('ok');
+      return;
+    }
+
+    res.writeHead(404);
+    res.end('Not found');
+  });
+
+  server.listen(config.port, () => {
+    console.log(`🌐 HTTP server on port ${config.port}`);
+  });
+
   const meRes = await fetch(`${API_BASE}/getMe`);
   const meData = await meRes.json();
   if (!meData.ok) throw new Error('getMe failed: ' + JSON.stringify(meData));
@@ -962,6 +1095,9 @@ async function start() {
         { command: 'editfood', description: 'ערוך/מחק מאכל מהמאגר' },
         { command: 'water', description: '💧 מעקב מים' },
         { command: 'waterlimit', description: 'שנה יעד מים יומי' },
+        { command: 'steps', description: '🚶 צעדים היום' },
+        { command: 'connectfit', description: 'חבר Google Fit' },
+        { command: 'stepsgoal', description: 'שנה יעד צעדים' },
         { command: 'reset', description: 'אפס את היום' },
       ],
     }),
