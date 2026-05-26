@@ -398,21 +398,21 @@ bot.command('steps', async (ctx) => {
     return;
   }
   const today = storage.getTodayKey();
-  const steps = await googlefit.fetchTodaySteps(ctx.from.id);
-  if (steps === null) {
+  const result = await googlefit.fetchTodaySteps(ctx.from.id);
+  if (result === null) {
     ctx.reply('❌ שגיאה בקריאת צעדים. נסה /connectfit מחדש.');
     return;
   }
+  const steps = result.steps;
   const goal = storage.getStepsGoal(ctx.from.id);
   const pct = Math.min(Math.round((steps / goal) * 100), 100);
   const filled = Math.round(pct / 10);
   const bar = '🟩'.repeat(filled) + '⬜'.repeat(10 - filled);
   const emoji = steps >= goal ? '🏆' : '🚶';
-  ctx.reply(
-    `${emoji} צעדים היום (${today}): ${steps.toLocaleString()}/${goal.toLocaleString()}\n` +
-    `${bar} ${pct}%` +
-    (steps >= goal ? '\n\n🎉 עמדת ביעד הצעדים! 💪' : '')
-  );
+  let msg = `${emoji} צעדים היום (${today}): ${steps.toLocaleString()}/${goal.toLocaleString()}\n${bar} ${pct}%`;
+  if (steps === 0) msg += `\n\nDEBUG: ${result.raw}`;
+  if (steps >= goal) msg += '\n\n🎉 עמדת ביעד הצעדים! 💪';
+  ctx.reply(msg);
 });
 
 // ─── /stepsgoal - Set steps goal ──────────────────────────

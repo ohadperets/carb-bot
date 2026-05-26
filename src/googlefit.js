@@ -128,7 +128,7 @@ async function fetchSteps(userId, date) {
 
   // Save to storage
   storage.saveSteps(userId, date, steps);
-  return steps;
+  return { steps, raw: JSON.stringify(data).slice(0, 300) };
 }
 
 async function fetchTodaySteps(userId) {
