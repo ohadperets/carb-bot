@@ -1019,10 +1019,7 @@ async function poll() {
 }
 
 async function start() {
-  // Pull data from cloud on fresh deploy
-  await storage.pullFromCloud();
-
-  // Start HTTP server for OAuth callback
+  // Start HTTP server for OAuth callback (start early for Railway health checks)
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${config.port}`);
 
@@ -1067,9 +1064,12 @@ async function start() {
     res.end('Not found');
   });
 
-  server.listen(config.port, () => {
+  server.listen(config.port, '0.0.0.0', () => {
     console.log(`🌐 HTTP server on port ${config.port}`);
   });
+
+  // Pull data from cloud on fresh deploy
+  await storage.pullFromCloud();
 
   const meRes = await fetch(`${API_BASE}/getMe`);
   const meData = await meRes.json();
