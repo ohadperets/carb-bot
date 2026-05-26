@@ -806,6 +806,93 @@ cron.schedule('0 23 * * *', async () => {
   }
 }, { timezone: 'Asia/Jerusalem' });
 
+// ─── Weekly report - Friday at 21:00 ─────────────────────
+cron.schedule('0 21 * * 5', async () => {
+  const groups = storage.getGroups();
+  const allStats = storage.getAllUsersPeriodStats(7);
+  if (allStats.length === 0) return;
+
+  let msg = '📊 דוח שבועי\n';
+  msg += '━━━━━━━━━━━━━━━━━━\n';
+
+  for (const s of allStats) {
+    const carbScore = `${s.daysInLimit}/${s.totalDays}`;
+    const waterScore = `${s.daysWaterGoal}/${s.totalDays}`;
+    const carbEmoji = s.daysInLimit >= 5 ? '🏆' : s.daysInLimit >= 3 ? '👍' : '⚠️';
+    const waterEmoji = s.daysWaterGoal >= 5 ? '💧🏆' : s.daysWaterGoal >= 3 ? '💧👍' : '💧⚠️';
+
+    msg += `\n${carbEmoji} ${s.firstName}\n`;
+    msg += `   🍞 פחמימות: ממוצע ${s.avgPortions}/${s.limit} | עמד/ה ${carbScore} ימים\n`;
+    msg += `   ${waterEmoji} מים: ממוצע ${s.avgWater}/${s.waterLimit}ml | עמד/ה ${waterScore} ימים\n`;
+    msg += `   📅 פירוט:\n`;
+
+    const dayNames = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'];
+    for (const day of s.days) {
+      const d = new Date(day.date);
+      const dayName = dayNames[d.getDay()];
+      const carbIcon = day.inLimit ? '✅' : '❌';
+      const waterIcon = day.waterGoal ? '💧' : '🚫';
+      msg += `      ${dayName} ${carbIcon} ${day.total}/${day.limit} ${waterIcon} ${day.water}ml\n`;
+    }
+  }
+
+  msg += `\n━━━━━━━━━━━━━━━━━━\n`;
+  msg += `שבת שלום! 🕯️`;
+
+  for (const chatId of groups) {
+    try {
+      await sendMessage(chatId, msg);
+    } catch (err) {
+      console.error(`Failed to send weekly report to ${chatId}:`, err.message);
+    }
+  }
+}, { timezone: 'Asia/Jerusalem' });
+
+// ─── Monthly report - last day of month at 22:00 ─────────
+cron.schedule('0 22 28-31 * *', async () => {
+  // Check if tomorrow is a new month
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (tomorrow.getMonth() === now.getMonth()) return; // not last day
+
+  const groups = storage.getGroups();
+  const daysInMonth = now.getDate();
+  const allStats = storage.getAllUsersPeriodStats(daysInMonth);
+  if (allStats.length === 0) return;
+
+  const monthNames = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+  let msg = `📊 דוח חודשי - ${monthNames[now.getMonth()]} ${now.getFullYear()}\n`;
+  msg += '━━━━━━━━━━━━━━━━━━\n';
+
+  for (const s of allStats) {
+    const carbPct = Math.round((s.daysInLimit / s.totalDays) * 100);
+    const waterPct = Math.round((s.daysWaterGoal / s.totalDays) * 100);
+    const overallEmoji = carbPct >= 70 ? '🏆' : carbPct >= 50 ? '👍' : '💪';
+
+    msg += `\n${overallEmoji} ${s.firstName}\n`;
+    msg += `   🍞 פחמימות:\n`;
+    msg += `      ממוצע יומי: ${s.avgPortions}/${s.limit} מנות\n`;
+    msg += `      ימים במגבלה: ${s.daysInLimit}/${s.totalDays} (${carbPct}%)\n`;
+    msg += `      סה"כ מנות: ${s.totalPortions}\n`;
+    msg += `   💧 מים:\n`;
+    msg += `      ממוצע יומי: ${s.avgWater}ml\n`;
+    msg += `      ימים ביעד: ${s.daysWaterGoal}/${s.totalDays} (${waterPct}%)\n`;
+    msg += `      סה"כ: ${(s.totalWater / 1000).toFixed(1)} ליטר\n`;
+  }
+
+  msg += `\n━━━━━━━━━━━━━━━━━━\n`;
+  msg += `חודש חדש, התחלה חדשה! 🚀`;
+
+  for (const chatId of groups) {
+    try {
+      await sendMessage(chatId, msg);
+    } catch (err) {
+      console.error(`Failed to send monthly report to ${chatId}:`, err.message);
+    }
+  }
+}, { timezone: 'Asia/Jerusalem' });
+
 // ─── Error handling ───────────────────────────────────────
 bot.catch((err, ctx) => {
   console.error(`Error for ${ctx.updateType}:`, err);

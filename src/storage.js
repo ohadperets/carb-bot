@@ -405,6 +405,78 @@ function getGroups() {
   return loadJSON(GROUPS_FILE, []);
 }
 
+// ─── Period reports (weekly / monthly) ───────────────────
+function getDateRange(days) {
+  const dates = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
+    d.setDate(d.getDate() - i);
+    dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }
+  return dates;
+}
+
+function getUserPeriodStats(userId, days) {
+  const data = loadUsers();
+  const user = data[userId];
+  if (!user) return null;
+
+  const dates = getDateRange(days);
+  const dailyStats = [];
+  let totalPortions = 0;
+  let totalWater = 0;
+  let daysInLimit = 0;
+  let daysWaterGoal = 0;
+
+  for (const date of dates) {
+    const dayData = user.days[date] || { entries: [], total: 0 };
+    const water = (user.water && user.water[date]) || 0;
+    const inLimit = dayData.total <= user.dailyLimit;
+    const waterGoal = water >= (user.waterLimit || 2000);
+
+    if (inLimit) daysInLimit++;
+    if (waterGoal) daysWaterGoal++;
+    totalPortions += dayData.total;
+    totalWater += water;
+
+    dailyStats.push({
+      date,
+      total: dayData.total,
+      limit: user.dailyLimit,
+      inLimit,
+      water,
+      waterLimit: user.waterLimit || 2000,
+      waterGoal,
+      entries: dayData.entries,
+    });
+  }
+
+  return {
+    firstName: user.firstName,
+    userId,
+    days: dailyStats,
+    totalPortions,
+    totalWater,
+    avgPortions: Math.round((totalPortions / dates.length) * 10) / 10,
+    avgWater: Math.round(totalWater / dates.length),
+    daysInLimit,
+    daysWaterGoal,
+    totalDays: dates.length,
+    limit: user.dailyLimit,
+    waterLimit: user.waterLimit || 2000,
+  };
+}
+
+function getAllUsersPeriodStats(days) {
+  const data = loadUsers();
+  const results = [];
+  for (const userId of Object.keys(data)) {
+    const stats = getUserPeriodStats(userId, days);
+    if (stats) results.push(stats);
+  }
+  return results;
+}
+
 module.exports = {
   findFood,
   addFood,
@@ -427,6 +499,7 @@ module.exports = {
   getWaterStatus,
   setWaterLimit,
   getAllUsersWaterStatus,
+  getAllUsersPeriodStats,
   pullFromCloud,
   syncToCloud,
 };
