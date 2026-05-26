@@ -146,7 +146,7 @@ bot.command('limit', (ctx) => {
 // ─── /sync (debug) ────────────────────────────────────────
 bot.command('sync', async (ctx) => {
   const result = await storage.syncToCloud();
-  ctx.reply(`סנכרון: ${result}`);
+  ctx.reply(`סנכרון: ${result}\nPORT=${process.env.PORT || 'unset'} listening=${config.port}`);
 });
 
 // ─── /reset ───────────────────────────────────────────────
