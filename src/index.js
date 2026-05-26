@@ -5,7 +5,7 @@ const { Telegraf, Markup } = require('telegraf');
 const cron = require('node-cron');
 const config = require('./config');
 const storage = require('./storage');
-const googlefit = require('./googlefit');
+
 
 if (!config.botToken) {
   console.error('ERROR: BOT_TOKEN is not set');
@@ -106,18 +106,16 @@ bot.command('status', async (ctx) => {
   let msg = formatStatus(ctx.from.first_name, status);
   msg += '\n\n' + formatWaterStatus(ctx.from.first_name, waterStatus);
 
-  // Add steps if Google Fit is connected
-  const tokens = storage.getGoogleTokens(ctx.from.id);
-  if (tokens) {
-    const steps = await googlefit.fetchTodaySteps(ctx.from.id);
-    if (steps !== null) {
-      const goal = storage.getStepsGoal(ctx.from.id);
-      const pct = Math.min(Math.round((steps / goal) * 100), 100);
-      const filled = Math.round(pct / 10);
-      const bar = '🟩'.repeat(filled) + '⬜'.repeat(10 - filled);
-      const emoji = steps >= goal ? '🏆' : '🚶';
-      msg += `\n\n${emoji} צעדים: ${steps.toLocaleString()}/${goal.toLocaleString()}\n${bar} ${pct}%`;
-    }
+  // Add steps from storage
+  const today = storage.getTodayKey();
+  const steps = storage.getSteps(ctx.from.id, today);
+  if (steps !== null && steps !== undefined) {
+    const goal = storage.getStepsGoal(ctx.from.id);
+    const pct = Math.min(Math.round((steps / goal) * 100), 100);
+    const filled = Math.round(pct / 10);
+    const bar = '🟩'.repeat(filled) + '⬜'.repeat(10 - filled);
+    const emoji = steps >= goal ? '🏆' : '🚶';
+    msg += `\n\n${emoji} צעדים: ${steps.toLocaleString()}/${goal.toLocaleString()}\n${bar} ${pct}%`;
   }
 
   ctx.reply(msg);
@@ -147,11 +145,6 @@ bot.command('limit', (ctx) => {
 bot.command('sync', async (ctx) => {
   const result = await storage.syncToCloud();
   ctx.reply(`סנכרון: ${result}\nPORT=${process.env.PORT || 'unset'} listening=${config.port}`);
-});
-
-bot.command('fitdebug', async (ctx) => {
-  const sources = await googlefit.listDataSources(ctx.from.id);
-  ctx.reply(`Data sources:\n${sources}`);
 });
 
 // ─── /reset ───────────────────────────────────────────────
@@ -369,55 +362,39 @@ bot.command('waterlimit', (ctx) => {
   ctx.reply(`✅ יעד המים שונה ל-${newLimit}ml (${(newLimit / 1000).toFixed(1)}L)`);
 });
 
-// ─── /connectfit - Link Google Fit ────────────────────────
-bot.command('connectfit', (ctx) => {
-  if (!config.googleClientId) {
-    ctx.reply('❌ Google Fit לא מוגדר.');
-    return;
-  }
-  const tokens = storage.getGoogleTokens(ctx.from.id);
-  if (tokens) {
-    ctx.reply('✅ Google Fit כבר מחובר!\nלניתוק: /disconnectfit');
-    return;
-  }
-  const url = googlefit.getAuthUrl(ctx.from.id);
-  ctx.reply(
-    '🏃 חיבור Google Fit\n\n' +
-    'לחץ על הקישור כדי לאשר גישה לצעדים:\n\n' +
-    `[🔗 התחבר ל-Google Fit](${url})`,
-    { parse_mode: 'Markdown', disable_web_page_preview: true }
-  );
-});
-
-// ─── /disconnectfit - Unlink Google Fit ───────────────────
-bot.command('disconnectfit', (ctx) => {
-  storage.saveGoogleTokens(ctx.from.id, null);
-  ctx.reply('✅ Google Fit נותק.');
-});
-
 // ─── /steps - Show today's steps ──────────────────────────
 bot.command('steps', async (ctx) => {
-  const tokens = storage.getGoogleTokens(ctx.from.id);
-  if (!tokens) {
-    ctx.reply('❌ Google Fit לא מחובר.\nשלח /connectfit לחיבור.');
-    return;
-  }
+  const args = ctx.message.text.replace(/^\/steps(@\S+)?/, '').trim();
   const today = storage.getTodayKey();
-  const result = await googlefit.fetchTodaySteps(ctx.from.id);
-  if (result === null) {
-    ctx.reply('❌ שגיאה בקריאת צעדים. נסה /connectfit מחדש.');
+
+  // If a number is provided, set today's steps
+  if (args) {
+    const steps = parseInt(args);
+    if (isNaN(steps) || steps < 0 || steps > 200000) {
+      ctx.reply('❌ מספר לא תקין');
+      return;
+    }
+    storage.saveSteps(ctx.from.id, today, steps);
+    const goal = storage.getStepsGoal(ctx.from.id);
+    const emoji = steps >= goal ? '🏆' : '🚶';
+    ctx.reply(`${emoji} צעדים עודכנו: ${steps.toLocaleString()}/${goal.toLocaleString()}` +
+      (steps >= goal ? '\n\n🎉 עמדת ביעד! 💪' : ''));
     return;
   }
-  const steps = result.steps;
+
+  // Show current steps
+  const steps = storage.getSteps(ctx.from.id, today);
   const goal = storage.getStepsGoal(ctx.from.id);
   const pct = Math.min(Math.round((steps / goal) * 100), 100);
   const filled = Math.round(pct / 10);
   const bar = '🟩'.repeat(filled) + '⬜'.repeat(10 - filled);
   const emoji = steps >= goal ? '🏆' : '🚶';
-  let msg = `${emoji} צעדים היום (${today}): ${steps.toLocaleString()}/${goal.toLocaleString()}\n${bar} ${pct}%`;
-  if (steps === 0) msg += `\n\nDEBUG: ${result.raw}`;
-  if (steps >= goal) msg += '\n\n🎉 עמדת ביעד הצעדים! 💪';
-  ctx.reply(msg);
+  ctx.reply(
+    `${emoji} צעדים היום: ${steps.toLocaleString()}/${goal.toLocaleString()}\n` +
+    `${bar} ${pct}%\n\n` +
+    `לעדכון: /steps <מספר>\nלמשל: /steps 5000` +
+    (steps >= goal ? '\n\n🎉 עמדת ביעד הצעדים! 💪' : '')
+  );
 });
 
 // ─── /stepsgoal - Set steps goal ──────────────────────────
@@ -820,6 +797,18 @@ cron.schedule('0 8,12,16,20 * * *', async () => {
       const wBar = '💧'.repeat(wFilled) + '⬜'.repeat(wEmpty);
       msg += `   ${wBar} 💧 ${w.total}/${w.limit}ml\n`;
     }
+
+    // Steps status
+    const today = storage.getTodayKey();
+    const steps = storage.getSteps(u.userId, today);
+    if (steps !== null && steps !== undefined) {
+      const goal = storage.getStepsGoal(u.userId);
+      const sPct = Math.min(Math.round((steps / goal) * 100), 100);
+      const sFilled = Math.round(sPct / 10);
+      const sBar = '🟩'.repeat(sFilled) + '⬜'.repeat(10 - sFilled);
+      const sEmoji = steps >= goal ? '🏆' : '🚶';
+      msg += `   ${sBar} ${sEmoji} ${steps.toLocaleString()}/${goal.toLocaleString()} צעדים\n`;
+    }
   });
 
   for (const chatId of groups) {
@@ -869,6 +858,19 @@ cron.schedule('0 23 * * *', async () => {
         msg += `   🎊💧 עמד/ה ביעד המים! ${w.total}/${w.limit}ml 🏆💪\n`;
       } else {
         msg += `   💧❌ מים: ${w.total}/${w.limit}ml (חסרו ${w.remaining}ml)\n`;
+      }
+    }
+
+    // Steps status
+    const today = storage.getTodayKey();
+    const steps = storage.getSteps(u.userId, today);
+    if (steps !== null && steps !== undefined) {
+      const goal = storage.getStepsGoal(u.userId);
+      const sEmoji = steps >= goal ? '🏆' : '❌';
+      if (steps >= goal) {
+        msg += `   🎊🚶 עמד/ה ביעד הצעדים! ${steps.toLocaleString()}/${goal.toLocaleString()} 🏆💪\n`;
+      } else {
+        msg += `   🚶❌ צעדים: ${steps.toLocaleString()}/${goal.toLocaleString()} (חסרו ${(goal - steps).toLocaleString()})\n`;
       }
     }
   });
@@ -1029,34 +1031,29 @@ async function start() {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${config.port}`);
 
-    if (url.pathname === '/oauth/callback') {
-      const code = url.searchParams.get('code');
-      const userId = url.searchParams.get('state');
+    if (url.pathname === '/api/steps') {
+      const key = url.searchParams.get('key');
+      const steps = parseInt(url.searchParams.get('steps'), 10);
 
-      if (!code || !userId) {
-        res.writeHead(400);
-        res.end('Missing code or state');
+      // Authenticate with a simple key derived from bot token
+      const expectedKey = config.botToken.split(':')[1].slice(0, 16);
+      if (key !== expectedKey) {
+        res.writeHead(401);
+        res.end('Unauthorized');
         return;
       }
 
-      try {
-        const tokens = await googlefit.exchangeCode(code);
-        storage.saveGoogleTokens(userId, {
-          access_token: tokens.access_token,
-          refresh_token: tokens.refresh_token,
-          expiry: Date.now() + (tokens.expires_in * 1000),
-        });
-
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end('<h1>✅ Google Fit מחובר!</h1><p>אפשר לסגור את הדף ולחזור לטלגרם.</p>');
-
-        // Notify user in Telegram
-        await sendMessage(userId, '✅ Google Fit חובר בהצלחה!\n\nשלח /steps לראות את הצעדים שלך.');
-      } catch (err) {
-        console.error('OAuth error:', err.message);
-        res.writeHead(500);
-        res.end('OAuth error: ' + err.message);
+      if (isNaN(steps) || steps < 0) {
+        res.writeHead(400);
+        res.end('Invalid steps value');
+        return;
       }
+
+      const userId = config.syncChatId; // owner's ID
+      const today = storage.getTodayKey();
+      storage.saveSteps(userId, today, steps);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, steps, date: today }));
       return;
     }
 
@@ -1102,7 +1099,6 @@ async function start() {
         { command: 'water', description: '💧 מעקב מים' },
         { command: 'waterlimit', description: 'שנה יעד מים יומי' },
         { command: 'steps', description: '🚶 צעדים היום' },
-        { command: 'connectfit', description: 'חבר Google Fit' },
         { command: 'stepsgoal', description: 'שנה יעד צעדים' },
         { command: 'reset', description: 'אפס את היום' },
       ],
