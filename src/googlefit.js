@@ -4,6 +4,7 @@ const storage = require('./storage');
 const SCOPES = ['https://www.googleapis.com/auth/fitness.activity.read'];
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const FITNESS_URL = 'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate';
+const DATASOURCES_URL = 'https://www.googleapis.com/fitness/v1/users/me/dataSources';
 
 function getAuthUrl(userId) {
   const params = new URLSearchParams({
@@ -136,9 +137,22 @@ async function fetchTodaySteps(userId) {
   return fetchSteps(userId, today);
 }
 
+async function listDataSources(userId) {
+  const token = await getValidToken(userId);
+  if (!token) return 'no token';
+  const res = await fetch(`${DATASOURCES_URL}?dataTypeName=com.google.step_count.delta`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return `error ${res.status}: ${await res.text()}`;
+  const data = await res.json();
+  if (!data.dataSource || data.dataSource.length === 0) return 'no step data sources found';
+  return data.dataSource.map(ds => ds.dataStreamId).join('\n');
+}
+
 module.exports = {
   getAuthUrl,
   exchangeCode,
   fetchSteps,
   fetchTodaySteps,
+  listDataSources,
 };

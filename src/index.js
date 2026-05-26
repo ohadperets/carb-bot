@@ -149,6 +149,11 @@ bot.command('sync', async (ctx) => {
   ctx.reply(`סנכרון: ${result}\nPORT=${process.env.PORT || 'unset'} listening=${config.port}`);
 });
 
+bot.command('fitdebug', async (ctx) => {
+  const sources = await googlefit.listDataSources(ctx.from.id);
+  ctx.reply(`Data sources:\n${sources}`);
+});
+
 // ─── /reset ───────────────────────────────────────────────
 bot.command('reset', (ctx) => {
   if (!storage.getUser(ctx.from.id)) {
