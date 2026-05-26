@@ -7,7 +7,4 @@ RUN npm install --omit=dev
 
 COPY . .
 
-ARG GH_SYNC_TOKEN
-ENV GH_SYNC_TOKEN=${GH_SYNC_TOKEN}
-
 CMD ["node", "src/index.js"]

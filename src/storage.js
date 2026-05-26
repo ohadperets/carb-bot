@@ -12,98 +12,110 @@ if (!fs.existsSync(config.dataDir)) {
   fs.mkdirSync(config.dataDir, { recursive: true });
 }
 
-// ─── GitHub sync (debounced) ───────────────────────────
+// ─── Telegram-based sync (debounced) ───────────────────────
 let syncTimer = null;
 const SYNC_DELAY = 10000; // 10 seconds debounce
+const API_BASE = `https://api.telegram.org/bot${config.botToken}`;
 
-function scheduleSyncToGit() {
-  if (!config.githubToken) return;
+function scheduleSyncToCloud() {
+  if (!config.botToken || !config.syncChatId) return;
   if (syncTimer) clearTimeout(syncTimer);
-  syncTimer = setTimeout(() => syncToGit(), SYNC_DELAY);
+  syncTimer = setTimeout(() => syncToCloud(), SYNC_DELAY);
 }
 
-async function syncToGit() {
-  if (!config.githubToken) {
-    console.log('⚠️ No GITHUB_TOKEN, skipping sync');
-    return 'no token';
+async function syncToCloud() {
+  if (!config.botToken || !config.syncChatId) {
+    return 'no config';
   }
-  const files = ['foods.json', 'users.json', 'groups.json'];
   try {
+    // Combine all data into one JSON
+    const payload = {};
+    const files = ['foods.json', 'users.json', 'groups.json'];
     for (const file of files) {
       const filePath = path.join(config.dataDir, file);
-      if (!fs.existsSync(filePath)) continue;
-      const content = fs.readFileSync(filePath, 'utf8');
-      await pushFileToGitHub(`data/${file}`, content);
+      if (fs.existsSync(filePath)) {
+        payload[file.replace('.json', '')] = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      }
     }
-    console.log('✅ Data synced to GitHub');
+
+    const jsonContent = JSON.stringify(payload, null, 2);
+    const blob = new Blob([jsonContent], { type: 'application/json' });
+    const formData = new FormData();
+    formData.append('chat_id', config.syncChatId);
+    formData.append('document', blob, 'backup.json');
+    formData.append('caption', `🔄 backup ${new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })}`);
+    formData.append('disable_notification', 'true');
+
+    // Send backup file
+    const sendRes = await fetch(`${API_BASE}/sendDocument`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!sendRes.ok) {
+      const err = await sendRes.text();
+      throw new Error(`sendDocument: ${err}`);
+    }
+    const { result } = await sendRes.json();
+
+    // Unpin previous and pin new backup
+    await fetch(`${API_BASE}/unpinAllChatMessages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: config.syncChatId }),
+    });
+    await fetch(`${API_BASE}/pinChatMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: config.syncChatId, message_id: result.message_id, disable_notification: true }),
+    });
+
+    console.log('✅ Data synced to Telegram');
     return 'ok';
   } catch (err) {
-    console.error('GitHub sync error:', err.message);
+    console.error('Telegram sync error:', err.message);
     return `error: ${err.message}`;
   }
 }
 
-async function pushFileToGitHub(filePath, content) {
-  const base = `https://api.github.com/repos/${config.githubRepo}/contents/${filePath}`;
-  const headers = {
-    Authorization: `token ${config.githubToken}`,
-    'Content-Type': 'application/json',
-    'User-Agent': 'carb-bot',
-  };
-
-  // Get current file SHA
-  let sha;
+// ─── Pull data from Telegram on startup ─────────────────────
+async function pullFromCloud() {
+  if (!config.botToken || !config.syncChatId) return;
   try {
-    const res = await fetch(base, { headers });
-    if (res.ok) {
-      const data = await res.json();
-      sha = data.sha;
-    }
-  } catch (e) { /* file may not exist yet */ }
+    // Get pinned message from chat
+    const chatRes = await fetch(`${API_BASE}/getChat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: config.syncChatId }),
+    });
+    if (!chatRes.ok) return;
+    const { result: chat } = await chatRes.json();
+    if (!chat.pinned_message || !chat.pinned_message.document) return;
 
-  // Push update
-  const body = {
-    message: `auto-sync ${filePath}`,
-    content: Buffer.from(content).toString('base64'),
-  };
-  if (sha) body.sha = sha;
+    // Download the backup file
+    const fileId = chat.pinned_message.document.file_id;
+    const fileRes = await fetch(`${API_BASE}/getFile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_id: fileId }),
+    });
+    if (!fileRes.ok) return;
+    const { result: fileInfo } = await fileRes.json();
 
-  const res = await fetch(base, {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`GitHub API ${res.status}: ${err}`);
-  }
-}
+    const downloadRes = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${fileInfo.file_path}`);
+    if (!downloadRes.ok) return;
+    const data = await downloadRes.json();
 
-// ─── Pull data from GitHub on startup ─────────────────────
-async function pullFromGitHub() {
-  if (!config.githubToken) return;
-  const files = ['foods.json', 'users.json', 'groups.json'];
-  const headers = {
-    Authorization: `token ${config.githubToken}`,
-    'User-Agent': 'carb-bot',
-  };
-
-  for (const file of files) {
-    try {
-      const url = `https://api.github.com/repos/${config.githubRepo}/contents/data/${file}`;
-      const res = await fetch(url, { headers });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const content = Buffer.from(data.content, 'base64').toString('utf8');
-      const localPath = path.join(config.dataDir, file);
-      // Only pull if local file doesn't exist (fresh deploy)
-      if (!fs.existsSync(localPath)) {
-        fs.writeFileSync(localPath, content, 'utf8');
-        console.log(`📥 Pulled ${file} from GitHub`);
+    // Restore files
+    const mapping = { foods: 'foods.json', users: 'users.json', groups: 'groups.json' };
+    for (const [key, file] of Object.entries(mapping)) {
+      if (data[key]) {
+        const localPath = path.join(config.dataDir, file);
+        fs.writeFileSync(localPath, JSON.stringify(data[key], null, 2), 'utf8');
+        console.log(`📥 Restored ${file} from Telegram backup`);
       }
-    } catch (err) {
-      console.error(`Failed to pull ${file}:`, err.message);
     }
+  } catch (err) {
+    console.error('Telegram pull error:', err.message);
   }
 }
 
@@ -115,7 +127,7 @@ function loadJSON(file, defaultVal = {}) {
 
 function saveJSON(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
-  scheduleSyncToGit();
+  scheduleSyncToCloud();
 }
 
 // ─── Foods DB (shared) ────────────────────────────────────
@@ -415,6 +427,6 @@ module.exports = {
   getWaterStatus,
   setWaterLimit,
   getAllUsersWaterStatus,
-  pullFromGitHub,
-  syncToGit,
+  pullFromCloud,
+  syncToCloud,
 };

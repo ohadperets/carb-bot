@@ -128,11 +128,7 @@ bot.command('limit', (ctx) => {
 
 // ─── /sync (debug) ────────────────────────────────────────
 bot.command('sync', async (ctx) => {
-  const hasToken = !!process.env.GH_SYNC_TOKEN;
-  const tokenLen = (process.env.GH_SYNC_TOKEN || '').length;
-  const configToken = !!require('./config').githubToken;
-  ctx.reply(`ENV: GH_SYNC_TOKEN exists=${hasToken} len=${tokenLen}\nconfig.githubToken exists=${configToken}`);
-  const result = await storage.syncToGit();
+  const result = await storage.syncToCloud();
   ctx.reply(`סנכרון: ${result}`);
 });
 
@@ -852,8 +848,8 @@ async function poll() {
 }
 
 async function start() {
-  // Pull data from GitHub on fresh deploy
-  await storage.pullFromGitHub();
+  // Pull data from cloud on fresh deploy
+  await storage.pullFromCloud();
 
   const meRes = await fetch(`${API_BASE}/getMe`);
   const meData = await meRes.json();
