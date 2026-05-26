@@ -262,7 +262,7 @@ bot.command('foods', (ctx) => {
 
 // ─── /editfood - Edit/delete food from database ──────────
 bot.command('editfood', (ctx) => {
-  const args = ctx.message.text.replace('/editfood', '').trim();
+  const args = ctx.message.text.replace(/^\/editfood(@\S+)?/, '').trim();
   if (!args) {
     userStates[ctx.from.id] = { action: 'edit_food_search' };
     ctx.reply('🔍 שלח את שם המאכל שתרצה לערוך/למחוק:');
@@ -284,7 +284,7 @@ bot.command('editfood', (ctx) => {
 
 // ─── /addfood - Add food to database ──────────────────────
 bot.command('addfood', (ctx) => {
-  const args = ctx.message.text.replace('/addfood', '').trim();
+  const args = ctx.message.text.replace(/^\/addfood(@\S+)?/, '').trim();
   if (!args) {
     userStates[ctx.from.id] = { action: 'add_food_name' };
     ctx.reply('🍽️ מה שם המאכל שתרצה להוסיף?');
