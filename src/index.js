@@ -397,6 +397,7 @@ bot.command('steps', async (ctx) => {
     ctx.reply('❌ Google Fit לא מחובר.\nשלח /connectfit לחיבור.');
     return;
   }
+  const today = storage.getTodayKey();
   const steps = await googlefit.fetchTodaySteps(ctx.from.id);
   if (steps === null) {
     ctx.reply('❌ שגיאה בקריאת צעדים. נסה /connectfit מחדש.');
@@ -408,7 +409,7 @@ bot.command('steps', async (ctx) => {
   const bar = '🟩'.repeat(filled) + '⬜'.repeat(10 - filled);
   const emoji = steps >= goal ? '🏆' : '🚶';
   ctx.reply(
-    `${emoji} צעדים היום: ${steps.toLocaleString()}/${goal.toLocaleString()}\n` +
+    `${emoji} צעדים היום (${today}): ${steps.toLocaleString()}/${goal.toLocaleString()}\n` +
     `${bar} ${pct}%` +
     (steps >= goal ? '\n\n🎉 עמדת ביעד הצעדים! 💪' : '')
   );

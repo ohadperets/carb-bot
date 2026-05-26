@@ -122,6 +122,10 @@ async function fetchSteps(userId, date) {
     }
   }
 
+  // Debug log
+  console.log(`Fitness API response for ${userId}/${date}:`, JSON.stringify(data).slice(0, 500));
+  console.log(`Steps parsed: ${steps}`);
+
   // Save to storage
   storage.saveSteps(userId, date, steps);
   return steps;
