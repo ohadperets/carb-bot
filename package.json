@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "set NODE_ENV=test && nodemon src/index.js"
+    "test": "set NODE_ENV=test && nodemon src/index.js",
+    "dashboard": "node generate-dashboard.js"
   },
   "dependencies": {
     "telegraf": "^4.16.0",

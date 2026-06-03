@@ -523,6 +523,7 @@ function setStepsGoal(userId, goal) {
 }
 
 module.exports = {
+  loadUsers,
   findFood,
   addFood,
   deleteFood,

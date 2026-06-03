@@ -5,6 +5,7 @@ const { Telegraf, Markup } = require('telegraf');
 const cron = require('node-cron');
 const config = require('./config');
 const storage = require('./storage');
+const { generateHTML } = require('./dashboard');
 
 
 if (!config.botToken) {
@@ -145,6 +146,25 @@ bot.command('limit', (ctx) => {
 bot.command('sync', async (ctx) => {
   const result = await storage.syncToCloud();
   ctx.reply(`סנכרון: ${result}\nPORT=${process.env.PORT || 'unset'} listening=${config.port}`);
+});
+
+// ─── /dashboard ───────────────────────────────────────────
+bot.command('dashboard', async (ctx) => {
+  if (!storage.getUser(ctx.from.id)) {
+    return ctx.reply('❌ לא נרשמת. השתמש ב-/start כדי להירשם.');
+  }
+  await ctx.reply('⏳ מכין דשבורד...');
+  try {
+    const html = generateHTML(storage.loadUsers());
+    const dateStr = new Date().toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' }).replace(/\//g, '-');
+    await ctx.replyWithDocument(
+      { source: Buffer.from(html, 'utf8'), filename: `dashboard-${dateStr}.html` },
+      { caption: '📊 דשבורד מעקב בריאות — פתח בדפדפן' }
+    );
+  } catch (err) {
+    console.error('Dashboard command error:', err.message);
+    ctx.reply('❌ שגיאה ביצירת הדשבורד.');
+  }
 });
 
 // ─── /reset ───────────────────────────────────────────────
@@ -931,9 +951,17 @@ cron.schedule('0 21 * * 5', async () => {
   msg += `\n━━━━━━━━━━━━━━━━━━\n`;
   msg += `שבת שלום! 🕯️`;
 
+  const dashboardHtml = generateHTML(storage.loadUsers());
+  const dashBuf = Buffer.from(dashboardHtml, 'utf8');
+
   for (const chatId of groups) {
     try {
       await sendMessage(chatId, msg);
+      await bot.telegram.sendDocument(
+        chatId,
+        { source: dashBuf, filename: 'weekly-dashboard.html' },
+        { caption: '📊 דשבורד שבועי — פתח בדפדפן' }
+      );
     } catch (err) {
       console.error(`Failed to send weekly report to ${chatId}:`, err.message);
     }
@@ -1101,6 +1129,7 @@ async function start() {
         { command: 'steps', description: '🚶 צעדים היום' },
         { command: 'stepsgoal', description: 'שנה יעד צעדים' },
         { command: 'reset', description: 'אפס את היום' },
+        { command: 'dashboard', description: '📊 דשבורד HTML' },
       ],
     }),
   });
