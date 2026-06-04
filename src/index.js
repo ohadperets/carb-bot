@@ -831,9 +831,16 @@ cron.schedule('0 8,12,16,20 * * *', async () => {
     }
   });
 
+  const statusDashBuf = Buffer.from(generateHTML(storage.loadUsers()), 'utf8');
+
   for (const chatId of groups) {
     try {
       await sendMessage(chatId, msg);
+      await bot.telegram.sendDocument(
+        chatId,
+        { source: statusDashBuf, filename: 'status-dashboard.html' },
+        { caption: '📊 דשבורד עדכני — פתח בדפדפן' }
+      );
     } catch (err) {
       console.error(`Failed to send status to ${chatId}:`, err.message);
     }
