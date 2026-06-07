@@ -289,6 +289,7 @@ function getTodayStatus(userId) {
   const today = getTodayKey();
   const dayData = user.days[today] || { entries: [], total: 0 };
   const { fatTotal, proteinTotal } = computeDayNutrition(dayData.entries);
+  const weightSet   = !!user.weight;
   const proteinGoal = user.weight || 70;
 
   return {
@@ -301,6 +302,7 @@ function getTodayStatus(userId) {
     fatRemaining:  Math.max(0, FAT_LIMIT - fatTotal),
     proteinTotal,
     proteinGoal,
+    weightSet,
   };
 }
 
@@ -312,6 +314,7 @@ function getAllUsersStatus() {
   for (const [userId, user] of Object.entries(data)) {
     const dayData = user.days[today] || { entries: [], total: 0 };
     const { fatTotal, proteinTotal } = computeDayNutrition(dayData.entries);
+    const weightSet   = !!user.weight;
     const proteinGoal = user.weight || 70;
     results.push({
       userId,
@@ -325,6 +328,7 @@ function getAllUsersStatus() {
       fatLimit:     FAT_LIMIT,
       proteinTotal,
       proteinGoal,
+      weightSet,
     });
   }
   return results;

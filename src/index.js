@@ -52,11 +52,17 @@ bot.start(async (ctx) => {
       `/reset - אפס את היום\n\n` +
       `⏰ דוחות אוטומטיים ב-8, 12, 16, 20 + סיכום ב-23:00`;
 
+    const weightNote = !status.weightSet
+      ? `\n⚠️ משקל לא הוגדר — שלח /setweight <משקל_בק"ג> לקביעת יעד חלבון אישי`
+      : `\n💪 יעד חלבון: ${status.proteinGoal} גרם (${user.weight} ק"ג)`;
+
     const sent = await ctx.reply(
       `שלום ${ctx.from.first_name}! 👋\n\n` +
       `📊 סטטוס היום:\n` +
       `🍞 פחמימות: ${status.total}/${status.limit} מנות\n` +
-      `💧 מים: ${waterStatus.total}/${waterStatus.limit}ml\n\n` +
+      `🧈 שומן: ${status.fatTotal}/${status.fatLimit} נקודות\n` +
+      `💧 מים: ${waterStatus.total}/${waterStatus.limit}ml` +
+      weightNote + `\n\n` +
       `━━━━━━━━━━━━━━━━━━\n` +
       guideMsg
     );
@@ -904,11 +910,16 @@ function formatStatus(firstName, status) {
     : `נשאר: ${fatR} נקודות\n`;
 
   // Protein
-  const proteinR = Math.max(0, status.proteinGoal - status.proteinTotal).toFixed(1);
-  const proteinPct = Math.round(Math.min(status.proteinTotal / (status.proteinGoal || 1), 1) * 100);
-  msg += `\n💪 חלבון: ${status.proteinTotal}/${status.proteinGoal} גרם\n`;
-  msg += `${makeBar(status.proteinTotal, status.proteinGoal, '🟦')}\n`;
-  msg += proteinPct >= 100 ? `✅ יעד חלבון הושג!\n` : `עוד: ${proteinR} גרם\n`;
+  if (!status.weightSet) {
+    msg += `\n💪 חלבון: ${status.proteinTotal} גרם\n`;
+    msg += `⚠️ משקל לא הוגדר — שלח /setweight <משקל> לקביעת יעד חלבון אישי\n`;
+  } else {
+    const proteinR   = Math.max(0, status.proteinGoal - status.proteinTotal).toFixed(1);
+    const proteinPct = Math.round(Math.min(status.proteinTotal / status.proteinGoal, 1) * 100);
+    msg += `\n💪 חלבון: ${status.proteinTotal}/${status.proteinGoal} גרם\n`;
+    msg += `${makeBar(status.proteinTotal, status.proteinGoal, '🟦')}\n`;
+    msg += proteinPct >= 100 ? `✅ יעד חלבון הושג!\n` : `עוד: ${proteinR} גרם\n`;
+  }
 
   if (status.entries.length > 0) {
     msg += `\n📝 היום:\n`;
@@ -954,8 +965,12 @@ function formatWaterStatus(firstName, status) {
 function formatQuickStatus(status) {
   const emoji = status.remaining <= 0 ? '🚫' : status.remaining <= 2 ? '⚡' : '📊';
   let msg = `${emoji} פח: ${status.total}/${status.limit}`;
-  if (status.fatTotal   !== undefined) msg += ` | 🧈 ${status.fatTotal}/${status.fatLimit}`;
-  if (status.proteinTotal !== undefined) msg += ` | 💪 ${status.proteinTotal}/${status.proteinGoal}גר`;
+  if (status.fatTotal !== undefined) msg += ` | 🧈 ${status.fatTotal}/${status.fatLimit}`;
+  if (status.proteinTotal !== undefined) {
+    msg += status.weightSet
+      ? ` | 💪 ${status.proteinTotal}/${status.proteinGoal}גר`
+      : ` | 💪 ${status.proteinTotal}גר ⚠️/setweight`;
+  }
   return msg;
 }
 
