@@ -105,8 +105,8 @@ async function pullFromCloud() {
     if (!downloadRes.ok) return;
     const data = await downloadRes.json();
 
-    // Restore files
-    const mapping = { foods: 'foods.json', users: 'users.json', groups: 'groups.json' };
+    // Restore user/group data only — foods.json is managed in git, never overwrite it
+    const mapping = { users: 'users.json', groups: 'groups.json' };
     for (const [key, file] of Object.entries(mapping)) {
       if (data[key]) {
         const localPath = path.join(config.dataDir, file);
