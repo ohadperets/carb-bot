@@ -194,6 +194,55 @@ bot.command('dashboard', async (ctx) => {
   }
 });
 
+// ─── /export ─────────────────────────────────────────────
+bot.command('export', async (ctx) => {
+  if (!storage.getUser(ctx.from.id)) {
+    return ctx.reply('שלח /start כדי להתחיל.');
+  }
+  await ctx.reply('⏳ מכין ייצוא נתונים...');
+  try {
+    const usersData = storage.loadUsers();
+    const foodsData = storage.getAllFoods();
+    const nowIL     = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
+    const dateStr   = `${nowIL.getFullYear()}-${String(nowIL.getMonth() + 1).padStart(2, '0')}-${String(nowIL.getDate()).padStart(2, '0')}`;
+
+    // JSON backup
+    const jsonBuf = Buffer.from(
+      JSON.stringify({ exportDate: dateStr, users: usersData, foods: foodsData }, null, 2), 'utf8'
+    );
+
+    // Food-log CSV
+    const BOM = '﻿';
+    const csvRows = [['שם', 'תאריך', 'שעה', 'מאכל', 'פחמימות', 'שומן', 'חלבון'].join(',')];
+    for (const [, user] of Object.entries(usersData)) {
+      const name = user.firstName || '';
+      for (const [date, dayData] of Object.entries(user.days || {})) {
+        for (const entry of (dayData.entries || [])) {
+          const food = foodsData[entry.item];
+          const carbs = typeof food === 'object' ? food.carbs || 0 : (food || 0);
+          const quantity = carbs > 0 ? entry.portions / carbs : 1;
+          const fat  = food && typeof food === 'object' ? Math.round((food.fat     || 0) * quantity * 10) / 10 : 0;
+          const prot = food && typeof food === 'object' ? Math.round((food.protein || 0) * quantity * 10) / 10 : 0;
+          csvRows.push([`"${name}"`, date, entry.time || '', `"${entry.item}"`, entry.portions, fat, prot].join(','));
+        }
+      }
+    }
+    const logCsvBuf = Buffer.from(BOM + csvRows.join('\n'), 'utf8');
+
+    await ctx.replyWithDocument(
+      { source: jsonBuf,   filename: `backup-${dateStr}.json` },
+      { caption: '📄 גיבוי JSON מלא' }
+    );
+    await ctx.replyWithDocument(
+      { source: logCsvBuf, filename: `food-log-${dateStr}.csv` },
+      { caption: '📋 יומן מזון CSV (Excel/Sheets)' }
+    );
+  } catch (err) {
+    console.error('Export error:', err.message);
+    ctx.reply('❌ שגיאה בייצוא.');
+  }
+});
+
 // ─── /reset ───────────────────────────────────────────────
 bot.command('reset', (ctx) => {
   if (!storage.getUser(ctx.from.id)) {
@@ -1184,6 +1233,76 @@ cron.schedule('0 21 * * 5', async () => {
       );
     } catch (err) {
       console.error(`Failed to send weekly report to ${chatId}:`, err.message);
+    }
+  }
+}, { timezone: 'Asia/Jerusalem' });
+
+// ─── Weekly data export — Sunday 21:00 ───────────────────
+// Sends full JSON backup + two CSV files to every group so the data
+// is always reachable in Telegram history regardless of the bot's state.
+cron.schedule('0 21 * * 0', async () => {
+  const groups = storage.getGroups();
+  if (!groups.length) return;
+
+  const usersData  = storage.loadUsers();
+  const foodsData  = storage.getAllFoods();
+  const nowIL      = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jerusalem' }));
+  const dateStr    = `${nowIL.getFullYear()}-${String(nowIL.getMonth() + 1).padStart(2, '0')}-${String(nowIL.getDate()).padStart(2, '0')}`;
+
+  // ── 1. Full JSON backup ──────────────────────────────────
+  const jsonPayload = JSON.stringify({ exportDate: dateStr, users: usersData, foods: foodsData }, null, 2);
+  const jsonBuf     = Buffer.from(jsonPayload, 'utf8');
+
+  // ── 2. Food-log CSV (one row per entry, all history) ────
+  const BOM = '﻿'; // Excel Hebrew compatibility
+  const csvRows = [['שם', 'תאריך', 'שעה', 'מאכל', 'פחמימות', 'שומן', 'חלבון'].join(',')];
+  for (const [, user] of Object.entries(usersData)) {
+    const name = user.firstName || '';
+    for (const [date, dayData] of Object.entries(user.days || {})) {
+      for (const entry of (dayData.entries || [])) {
+        const food = foodsData[entry.item];
+        const carbs = typeof food === 'object' ? food.carbs || 0 : (food || 0);
+        const quantity = carbs > 0 ? entry.portions / carbs : 1;
+        const fat  = food && typeof food === 'object' ? Math.round((food.fat     || 0) * quantity * 10) / 10 : 0;
+        const prot = food && typeof food === 'object' ? Math.round((food.protein || 0) * quantity * 10) / 10 : 0;
+        csvRows.push([
+          `"${name}"`, date, entry.time || '', `"${entry.item}"`,
+          entry.portions, fat, prot,
+        ].join(','));
+      }
+    }
+  }
+  const logCsvBuf = Buffer.from(BOM + csvRows.join('\n'), 'utf8');
+
+  // ── 3. Foods database CSV ────────────────────────────────
+  const foodRows = [['מאכל', 'פחמימות', 'שומן (נק׳)', 'חלבון (גר׳)'].join(',')];
+  for (const [name, data] of Object.entries(foodsData)) {
+    if (name.startsWith('_')) continue;
+    const c = typeof data === 'object' ? data.carbs || 0 : data;
+    const f = typeof data === 'object' ? data.fat   || 0 : 0;
+    const p = typeof data === 'object' ? data.protein || 0 : 0;
+    foodRows.push([`"${name}"`, c, f, p].join(','));
+  }
+  const foodCsvBuf = Buffer.from(BOM + foodRows.join('\n'), 'utf8');
+
+  // ── 4. Send to every group ───────────────────────────────
+  const caption = `📦 גיבוי שבועי — ${dateStr}`;
+  for (const chatId of groups) {
+    try {
+      await bot.telegram.sendDocument(chatId,
+        { source: jsonBuf,    filename: `backup-${dateStr}.json` },
+        { caption: `${caption}\n📄 גיבוי JSON מלא (משתמשים + מאגר מזון)` }
+      );
+      await bot.telegram.sendDocument(chatId,
+        { source: logCsvBuf,  filename: `food-log-${dateStr}.csv` },
+        { caption: `${caption}\n📋 יומן מזון — כל הרשומות (Excel/Sheets)` }
+      );
+      await bot.telegram.sendDocument(chatId,
+        { source: foodCsvBuf, filename: `foods-db-${dateStr}.csv` },
+        { caption: `${caption}\n🥗 מאגר מזון — ${foodRows.length - 1} פריטים (Excel/Sheets)` }
+      );
+    } catch (err) {
+      console.error(`Weekly export to ${chatId} failed:`, err.message);
     }
   }
 }, { timezone: 'Asia/Jerusalem' });
