@@ -1438,8 +1438,17 @@ async function start() {
     console.log(`🌐 HTTP server on port ${config.port}`);
   });
 
+  // Warn loudly if backup/restore is disabled (missing SYNC_CHAT_ID env var)
+  if (!config.syncChatId) {
+    console.error('⚠️  WARNING: SYNC_CHAT_ID is not set. Telegram backup/restore is DISABLED.');
+    console.error('⚠️  User data will be lost on every redeploy. Set SYNC_CHAT_ID in env vars.');
+  }
+
   // Pull data from cloud on fresh deploy
   await storage.pullFromCloud();
+  if (config.syncChatId) {
+    console.log('✅ Cloud restore complete.');
+  }
 
   const meRes = await fetch(`${API_BASE}/getMe`);
   const meData = await meRes.json();
@@ -1467,6 +1476,8 @@ async function start() {
         { command: 'waterlimit', description: 'שנה יעד מים יומי' },
         { command: 'steps', description: '🚶 צעדים היום' },
         { command: 'stepsgoal', description: 'שנה יעד צעדים' },
+        { command: 'setweight', description: 'עדכן משקל (יעד חלבון)' },
+        { command: 'export', description: '📦 ייצא נתונים (JSON + CSV)' },
         { command: 'reset', description: 'אפס את היום' },
         { command: 'dashboard', description: '📊 דשבורד HTML' },
       ],
