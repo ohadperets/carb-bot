@@ -924,7 +924,9 @@ function formatStatus(firstName, status) {
   if (status.entries.length > 0) {
     msg += `\n📝 היום:\n`;
     status.entries.forEach((e) => {
-      msg += `  ${e.time} • ${e.item} (${e.portions})\n`;
+      const f = (n) => parseFloat((n || 0).toFixed(1));
+      msg += `  ${e.time} • ${e.item}`;
+      msg += `  (פח:${f(e.portions)} 🧈${f(e.fat)} 💪${f(e.protein)})\n`;
     });
   }
 

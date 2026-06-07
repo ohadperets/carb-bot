@@ -233,17 +233,29 @@ function setWeight(userId, kg) {
 // Fat: each food entry contributes fat_pts * quantity.
 // Protein: same pattern (pts = grams).
 // For zero-carb foods (e.g. chicken), each log entry counts as 1 serving.
-function computeDayNutrition(entries) {
+// Returns a copy of each entry annotated with its own fat + protein contribution.
+function enrichEntries(entries) {
   const foods = loadFoods();
-  let fatTotal = 0;
-  let proteinTotal = 0;
-  for (const entry of entries) {
+  return entries.map(entry => {
     const food = foods[entry.item];
-    if (!food || typeof food !== 'object') continue;
-    const carbs = food.carbs || 0;
+    if (!food || typeof food !== 'object') {
+      return { ...entry, fat: 0, protein: 0 };
+    }
+    const carbs    = food.carbs || 0;
     const quantity = carbs > 0 ? entry.portions / carbs : 1;
-    fatTotal     += (food.fat     || 0) * quantity;
-    proteinTotal += (food.protein || 0) * quantity;
+    return {
+      ...entry,
+      fat:     Math.round((food.fat     || 0) * quantity * 10) / 10,
+      protein: Math.round((food.protein || 0) * quantity * 10) / 10,
+    };
+  });
+}
+
+function computeDayNutrition(entries) {
+  let fatTotal = 0, proteinTotal = 0;
+  for (const entry of enrichEntries(entries)) {
+    fatTotal     += entry.fat;
+    proteinTotal += entry.protein;
   }
   return {
     fatTotal:     Math.round(fatTotal     * 10) / 10,
@@ -288,6 +300,7 @@ function getTodayStatus(userId) {
 
   const today = getTodayKey();
   const dayData = user.days[today] || { entries: [], total: 0 };
+  const entries = enrichEntries(dayData.entries);
   const { fatTotal, proteinTotal } = computeDayNutrition(dayData.entries);
   const weightSet   = !!user.weight;
   const proteinGoal = user.weight || 70;
@@ -296,7 +309,7 @@ function getTodayStatus(userId) {
     total:         dayData.total,
     remaining:     user.dailyLimit - dayData.total,
     limit:         user.dailyLimit,
-    entries:       dayData.entries,
+    entries,
     fatTotal,
     fatLimit:      FAT_LIMIT,
     fatRemaining:  Math.max(0, FAT_LIMIT - fatTotal),
