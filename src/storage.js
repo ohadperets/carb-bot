@@ -141,25 +141,34 @@ function loadFoods() {
   return foods;
 }
 
+function _parseFoodEntry(data) {
+  if (typeof data === 'number') return { carbs: data, fat: 0, protein: 0 };
+  return { carbs: data.carbs ?? 0, fat: data.fat ?? 0, protein: data.protein ?? 0 };
+}
+
 function findFood(name) {
   const foods = loadFoods();
   const normalized = name.trim().toLowerCase();
 
   // Exact match
-  for (const [key, portions] of Object.entries(foods)) {
+  for (const [key, data] of Object.entries(foods)) {
+    if (key.startsWith('_')) continue;
     if (key.toLowerCase() === normalized) {
-      return { name: key, portions };
+      const { carbs, fat, protein } = _parseFoodEntry(data);
+      return { name: key, portions: carbs, carbs, fat, protein, matchType: 'exact' };
     }
   }
 
   // Partial match (input contains a food name or food name contains input)
   let bestMatch = null;
   let bestLength = 0;
-  for (const [key, portions] of Object.entries(foods)) {
+  for (const [key, data] of Object.entries(foods)) {
+    if (key.startsWith('_')) continue;
     const keyLower = key.toLowerCase();
     if (keyLower.includes(normalized) || normalized.includes(keyLower)) {
       if (key.length > bestLength) {
-        bestMatch = { name: key, portions };
+        const { carbs, fat, protein } = _parseFoodEntry(data);
+        bestMatch = { name: key, portions: carbs, carbs, fat, protein, matchType: 'partial' };
         bestLength = key.length;
       }
     }
@@ -169,7 +178,12 @@ function findFood(name) {
 
 function addFood(name, portions) {
   const foods = loadFoods();
-  foods[name] = portions;
+  const existing = foods[name];
+  if (existing && typeof existing === 'object') {
+    foods[name] = { ...existing, carbs: portions };
+  } else {
+    foods[name] = { carbs: portions, fat: 0, protein: 0 };
+  }
   saveJSON(FOODS_FILE, foods);
 }
 
@@ -195,15 +209,46 @@ function getUser(userId) {
   return data[userId] || null;
 }
 
-function createUser(userId, firstName, dailyLimit) {
+function createUser(userId, firstName, dailyLimit, weight) {
   const data = loadUsers();
   data[userId] = {
     firstName: firstName || '',
     dailyLimit,
+    weight: weight || 70,
     days: {},
   };
   saveUsers(data);
   return data[userId];
+}
+
+function setWeight(userId, kg) {
+  const data = loadUsers();
+  if (!data[userId]) return false;
+  data[userId].weight = kg;
+  saveUsers(data);
+  return true;
+}
+
+// Compute fat + protein totals from an entry list using the foods database.
+// Fat: each food entry contributes fat_pts * quantity.
+// Protein: same pattern (pts = grams).
+// For zero-carb foods (e.g. chicken), each log entry counts as 1 serving.
+function computeDayNutrition(entries) {
+  const foods = loadFoods();
+  let fatTotal = 0;
+  let proteinTotal = 0;
+  for (const entry of entries) {
+    const food = foods[entry.item];
+    if (!food || typeof food !== 'object') continue;
+    const carbs = food.carbs || 0;
+    const quantity = carbs > 0 ? entry.portions / carbs : 1;
+    fatTotal     += (food.fat     || 0) * quantity;
+    proteinTotal += (food.protein || 0) * quantity;
+  }
+  return {
+    fatTotal:     Math.round(fatTotal     * 10) / 10,
+    proteinTotal: Math.round(proteinTotal * 10) / 10,
+  };
 }
 
 function getTodayKey() {
@@ -234,6 +279,8 @@ function addPortions(userId, itemName, portions) {
   return user.days[today];
 }
 
+const FAT_LIMIT = 8;
+
 function getTodayStatus(userId) {
   const data = loadUsers();
   const user = data[userId];
@@ -241,12 +288,19 @@ function getTodayStatus(userId) {
 
   const today = getTodayKey();
   const dayData = user.days[today] || { entries: [], total: 0 };
+  const { fatTotal, proteinTotal } = computeDayNutrition(dayData.entries);
+  const proteinGoal = user.weight || 70;
 
   return {
-    total: dayData.total,
-    remaining: user.dailyLimit - dayData.total,
-    limit: user.dailyLimit,
-    entries: dayData.entries,
+    total:         dayData.total,
+    remaining:     user.dailyLimit - dayData.total,
+    limit:         user.dailyLimit,
+    entries:       dayData.entries,
+    fatTotal,
+    fatLimit:      FAT_LIMIT,
+    fatRemaining:  Math.max(0, FAT_LIMIT - fatTotal),
+    proteinTotal,
+    proteinGoal,
   };
 }
 
@@ -257,14 +311,20 @@ function getAllUsersStatus() {
 
   for (const [userId, user] of Object.entries(data)) {
     const dayData = user.days[today] || { entries: [], total: 0 };
+    const { fatTotal, proteinTotal } = computeDayNutrition(dayData.entries);
+    const proteinGoal = user.weight || 70;
     results.push({
       userId,
-      firstName: user.firstName,
-      total: dayData.total,
-      limit: user.dailyLimit,
-      remaining: user.dailyLimit - dayData.total,
-      success: dayData.total <= user.dailyLimit,
-      entries: dayData.entries,
+      firstName:    user.firstName,
+      total:        dayData.total,
+      limit:        user.dailyLimit,
+      remaining:    user.dailyLimit - dayData.total,
+      success:      dayData.total <= user.dailyLimit,
+      entries:      dayData.entries,
+      fatTotal,
+      fatLimit:     FAT_LIMIT,
+      proteinTotal,
+      proteinGoal,
     });
   }
   return results;
@@ -530,6 +590,8 @@ module.exports = {
   getAllFoods,
   getUser,
   createUser,
+  setWeight,
+  computeDayNutrition,
   addPortions,
   getTodayStatus,
   getAllUsersStatus,

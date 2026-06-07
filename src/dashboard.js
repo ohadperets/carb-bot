@@ -22,20 +22,44 @@ function shortDay(iso) {
   return HE_DAYS[new Date(iso + 'T12:00:00').getDay()];
 }
 
+const FAT_LIMIT = 8;
+
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
-function buildDay(user, date) {
+function computeDayNutrition(entries, foods) {
+  let fatTotal = 0, proteinTotal = 0;
+  for (const entry of (entries || [])) {
+    const food = foods[entry.item];
+    if (!food || typeof food !== 'object') continue;
+    const carbs    = food.carbs || 0;
+    const quantity = carbs > 0 ? entry.portions / carbs : 1;
+    fatTotal     += (food.fat     || 0) * quantity;
+    proteinTotal += (food.protein || 0) * quantity;
+  }
+  return {
+    fatTotal:     Math.round(fatTotal     * 10) / 10,
+    proteinTotal: Math.round(proteinTotal * 10) / 10,
+  };
+}
+
+function buildDay(user, date, foods) {
   const dd    = user.days?.[date] || { entries: [], total: 0 };
   const water = user.water?.[date] || 0;
   const steps = user.steps?.[date] || 0;
   const total = +(dd.total || 0).toFixed(2);
+  const { fatTotal, proteinTotal } = computeDayNutrition(dd.entries, foods || {});
+  const proteinGoal = user.weight || 70;
   return {
     date,
     total,
     entries:      dd.entries || [],
     water,
     steps,
+    fatTotal,
+    proteinTotal,
     inLimit:      total <= user.dailyLimit,
+    fatInLimit:   fatTotal <= FAT_LIMIT,
+    proteinMet:   proteinTotal >= proteinGoal,
     waterGoal:    water >= (user.waterLimit || 2000),
     stepsGoalMet: steps > 0 && steps >= (user.stepsGoal || 10000),
     active:       total > 0 || water > 0 || steps > 0,
@@ -94,15 +118,16 @@ function buildRecs(u) {
   return recs.slice(0, 6);
 }
 
-function computeStats(usersData) {
+function computeStats(usersData, foods) {
   const today = dateKey(0);
   const last7  = dateRange(7);
   const last30 = dateRange(30);
+  const foodsMap = foods || {};
 
   return Object.entries(usersData).map(([userId, user]) => {
-    const week      = last7.map(d  => buildDay(user, d));
-    const month     = last30.map(d => buildDay(user, d));
-    const todayStat = buildDay(user, today);
+    const week      = last7.map(d  => buildDay(user, d, foodsMap));
+    const month     = last30.map(d => buildDay(user, d, foodsMap));
+    const todayStat = buildDay(user, today, foodsMap);
 
     const carbStreak  = calcStreak(month, 'inLimit');
     const waterStreak = calcStreak(month, 'waterGoal');
@@ -126,20 +151,30 @@ function computeStats(usersData) {
       .sort((a, b) => b[1] - a[1]).slice(0, 6)
       .map(([item, portions]) => ({ item, portions: Math.round(portions * 10) / 10 }));
 
+    const proteinGoal  = user.weight || 70;
+    const avgFatWeek   = wavg(week,  'fatTotal');
+    const avgProtWeek  = wavg(week,  'proteinTotal');
+    const weekFatOk    = week.filter(d  => d.active && d.fatInLimit).length;
+    const weekProtMet  = week.filter(d  => d.active && d.proteinMet).length;
+
     return {
       userId,
       firstName:   user.firstName || 'משתמש',
       dailyLimit:  user.dailyLimit,
       waterLimit:  user.waterLimit || 2000,
       stepsGoal:   user.stepsGoal  || 10000,
+      fatLimit:    FAT_LIMIT,
+      proteinGoal,
       today:       todayStat,
       week,
       month,
       carbStreak,  waterStreak,
       avgCarbsWeek, avgWaterWeek,
       avgCarbsMonth, avgWaterMonth,
+      avgFatWeek,  avgProtWeek,
       weekCarbSuccess,  weekWaterSuccess,  weekActiveCount,
       monthCarbSuccess, monthWaterSuccess, monthActiveCount,
+      weekFatOk,   weekProtMet,
       topFoods,
       recs: buildRecs({ todayStat, week, dailyLimit: user.dailyLimit, waterLimit: user.waterLimit || 2000, carbStreak, waterStreak, avgCarbsWeek, avgWaterWeek, weekCarbSuccess, weekActiveCount }),
     };
@@ -169,15 +204,19 @@ function ring(pctVal, color, label) {
 function pct(v, total) { return total ? Math.min(100, Math.round((v / total) * 100)) : 0; }
 
 function userSection(s, today) {
-  const { dailyLimit: dl, waterLimit: wl, stepsGoal: sg } = s;
+  const { dailyLimit: dl, waterLimit: wl, stepsGoal: sg, fatLimit: fl, proteinGoal: pg } = s;
   const t = s.today;
 
-  const carbPct    = pct(t.total, dl);
-  const waterPct   = pct(t.water, wl);
-  const stepsPct   = pct(t.steps, sg);
+  const carbPct    = pct(t.total,        dl);
+  const waterPct   = pct(t.water,        wl);
+  const stepsPct   = pct(t.steps,        sg);
+  const fatPct     = pct(t.fatTotal,     fl);
+  const protPct    = pct(t.proteinTotal, pg);
   const carbColor  = carbPct  <= 100 ? 'success' : carbPct  <= 125 ? 'warning' : 'danger';
   const waterColor = waterPct >= 100 ? 'success' : waterPct >=  70 ? 'warning' : 'danger';
   const stepsColor = stepsPct >= 100 ? 'success' : stepsPct >=  70 ? 'warning' : 'danger';
+  const fatColor   = fatPct   <= 100 ? 'success' : fatPct   <= 125 ? 'warning' : 'danger';
+  const protColor  = protPct  >= 100 ? 'success' : protPct  >=  70 ? 'warning' : 'danger';
 
   const hasSteps       = s.week.some(d => d.steps > 0) || t.steps > 0;
   const weekPct        = s.weekActiveCount  ? Math.round((s.weekCarbSuccess  / s.weekActiveCount)  * 100) : 0;
@@ -210,6 +249,22 @@ function userSection(s, today) {
     ? t.entries.map((e, i) => `<tr><td class="rank">${i + 1}</td><td class="time">${e.time || ''}</td><td>${e.item}</td><td class="num">${e.portions}</td></tr>`).join('')
     : '<tr><td colspan="4" class="empty">אין רשומות להיום</td></tr>';
 
+  const fatCard = `
+<div class="stat-card ${fatColor}">
+  <div class="card-label">שומן היום</div>
+  <div class="ring-wrap">${ring(fatPct, fatColor, `${t.fatTotal}/${fl}`)}</div>
+  <div class="card-sub">נקודות שומן</div>
+  <div class="card-status ${fatColor}">${fatPct <= 100 ? `נותרו ${(fl - t.fatTotal).toFixed(1)}` : `חריגה של ${(t.fatTotal - fl).toFixed(1)}`}</div>
+</div>`;
+
+  const protCard = `
+<div class="stat-card ${protColor}">
+  <div class="card-label">חלבון היום</div>
+  <div class="ring-wrap">${ring(protPct, protColor, `${t.proteinTotal}/${pg}`)}</div>
+  <div class="card-sub">גרם (יעד ${pg}ג׳)</div>
+  <div class="card-status ${protColor}">${protPct >= 100 ? 'יעד הושג! 💪' : `עוד ${Math.max(0, pg - t.proteinTotal).toFixed(1)}ג׳`}</div>
+</div>`;
+
   const stepsCard = hasSteps ? `
 <div class="stat-card ${stepsColor}">
   <div class="card-label">צעדים היום</div>
@@ -224,7 +279,7 @@ function userSection(s, today) {
     <div class="avatar">${s.firstName.charAt(0)}</div>
     <div class="user-meta">
       <h2>${s.firstName}</h2>
-      <p>גבול פחמימות: <strong>${dl}</strong> מנות &nbsp;•&nbsp; יעד מים: <strong>${wl} מ"ל</strong>${hasSteps ? ` &nbsp;•&nbsp; יעד צעדים: <strong>${sg.toLocaleString()}</strong>` : ''}</p>
+      <p>🍞 גבול פחמימות: <strong>${dl}</strong> &nbsp;•&nbsp; 🧈 גבול שומן: <strong>${fl}</strong> &nbsp;•&nbsp; 💪 יעד חלבון: <strong>${pg}ג׳</strong> &nbsp;•&nbsp; 💧 יעד מים: <strong>${wl} מ"ל</strong>${hasSteps ? ` &nbsp;•&nbsp; 🚶 יעד צעדים: <strong>${sg.toLocaleString()}</strong>` : ''}</p>
     </div>
     <div class="streaks">
       <span class="streak">🔥 ${s.carbStreak} ימי פחמימות</span>
@@ -240,6 +295,8 @@ function userSection(s, today) {
       <div class="card-sub">מנות</div>
       <div class="card-status ${carbColor}">${carbPct <= 100 ? `נותרו ${Math.max(0, dl - t.total).toFixed(1)}` : `חריגה של ${(t.total - dl).toFixed(1)}`}</div>
     </div>
+    ${fatCard}
+    ${protCard}
     <div class="stat-card ${waterColor}">
       <div class="card-label">מים היום</div>
       <div class="ring-wrap">${ring(waterPct, waterColor, `${t.water}`)}</div>
@@ -252,6 +309,7 @@ function userSection(s, today) {
       <div class="score-num ${weekScoreColor}">${weekPct}%</div>
       <div class="score-sub">ימים בגבול הפחמימות</div>
       <div class="score-detail">${s.weekCarbSuccess}/${s.weekActiveCount} ימים פעילים</div>
+      <div class="score-water">🧈 ${s.weekFatOk}/${s.weekActiveCount} ימי שומן &nbsp;💪 ${s.weekProtMet}/${s.weekActiveCount} ימי חלבון</div>
       <div class="score-water">💧 ${s.weekWaterSuccess}/${s.weekActiveCount} ימי מים</div>
     </div>
   </div>
@@ -265,6 +323,14 @@ function userSection(s, today) {
       <canvas id="carb-${s.userId}" height="150"></canvas>
     </div>
     <div class="chart-card">
+      <div class="chart-title">שומן — 7 ימים</div>
+      <canvas id="fat-${s.userId}" height="150"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">חלבון — 7 ימים</div>
+      <canvas id="prot-${s.userId}" height="150"></canvas>
+    </div>
+    <div class="chart-card">
       <div class="chart-title">צריכת מים — 7 ימים</div>
       <canvas id="water-${s.userId}" height="150"></canvas>
     </div>
@@ -274,6 +340,8 @@ function userSection(s, today) {
   <div class="month-grid">
     <div class="mstat"><div class="mval ${monthCarbPct >= 70 ? 'success' : monthCarbPct >= 50 ? 'warning' : 'danger'}">${monthCarbPct}%</div><div class="mlabel">ימים בגבול הפחמימות</div><div class="msub">${s.monthCarbSuccess}/${s.monthActiveCount} ימים פעילים</div></div>
     <div class="mstat"><div class="mval">${s.avgCarbsMonth}</div><div class="mlabel">ממוצע פחמימות יומי</div><div class="msub">גבול: ${dl}</div></div>
+    <div class="mstat"><div class="mval">${s.avgFatWeek}</div><div class="mlabel">ממוצע שומן שבועי</div><div class="msub">גבול: ${fl} נקודות</div></div>
+    <div class="mstat"><div class="mval">${s.avgProtWeek}ג׳</div><div class="mlabel">ממוצע חלבון שבועי</div><div class="msub">יעד: ${pg}ג׳</div></div>
     <div class="mstat"><div class="mval ${monthWaterPct >= 70 ? 'success' : 'warning'}">${monthWaterPct}%</div><div class="mlabel">ימים עם יעד מים</div><div class="msub">${s.monthWaterSuccess}/${s.monthActiveCount} ימים פעילים</div></div>
     <div class="mstat"><div class="mval">${s.avgWaterMonth} מ"ל</div><div class="mlabel">ממוצע מים יומי</div><div class="msub">יעד: ${wl} מ"ל</div></div>
   </div>
@@ -305,12 +373,18 @@ function chartScript(allStats) {
   return allStats.map(s => {
     const labels  = JSON.stringify(s.week.map(d => shortDay(d.date)));
     const carbs   = JSON.stringify(s.week.map(d => d.total));
+    const fats    = JSON.stringify(s.week.map(d => d.fatTotal));
+    const prots   = JSON.stringify(s.week.map(d => d.proteinTotal));
     const waters  = JSON.stringify(s.week.map(d => d.water));
-    const carbBg  = JSON.stringify(s.week.map(d => d.total <= s.dailyLimit ? 'rgba(34,197,94,.7)'   : 'rgba(239,68,68,.7)'));
-    const carbBdr = JSON.stringify(s.week.map(d => d.total <= s.dailyLimit ? '#16a34a'              : '#dc2626'));
-    const watBg   = JSON.stringify(s.week.map(d => d.water >= s.waterLimit ? 'rgba(59,130,246,.75)' : 'rgba(148,163,184,.5)'));
-    const watBdr  = JSON.stringify(s.week.map(d => d.water >= s.waterLimit ? '#2563eb'              : '#94a3b8'));
-    const dl = s.dailyLimit, wl = s.waterLimit, uid = s.userId;
+    const carbBg  = JSON.stringify(s.week.map(d => d.total     <= s.dailyLimit   ? 'rgba(34,197,94,.7)'    : 'rgba(239,68,68,.7)'));
+    const carbBdr = JSON.stringify(s.week.map(d => d.total     <= s.dailyLimit   ? '#16a34a'               : '#dc2626'));
+    const fatBg   = JSON.stringify(s.week.map(d => d.fatTotal  <= s.fatLimit     ? 'rgba(251,146,60,.75)'  : 'rgba(239,68,68,.7)'));
+    const fatBdr  = JSON.stringify(s.week.map(d => d.fatTotal  <= s.fatLimit     ? '#ea580c'               : '#dc2626'));
+    const protBg  = JSON.stringify(s.week.map(d => d.proteinTotal >= s.proteinGoal ? 'rgba(59,130,246,.75)' : 'rgba(148,163,184,.5)'));
+    const protBdr = JSON.stringify(s.week.map(d => d.proteinTotal >= s.proteinGoal ? '#2563eb'              : '#94a3b8'));
+    const watBg   = JSON.stringify(s.week.map(d => d.water     >= s.waterLimit   ? 'rgba(99,102,241,.75)'  : 'rgba(148,163,184,.5)'));
+    const watBdr  = JSON.stringify(s.week.map(d => d.water     >= s.waterLimit   ? '#4f46e5'               : '#94a3b8'));
+    const dl = s.dailyLimit, fl = s.fatLimit, pg = s.proteinGoal, wl = s.waterLimit, uid = s.userId;
 
     return `(function(){
   const base=(extra)=>({responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,grid:{color:'rgba(0,0,0,.05)'},ticks:{font:{size:10},...(extra||{})}},x:{grid:{display:false},ticks:{font:{size:10,family:'inherit'}}}}});
@@ -318,6 +392,16 @@ function chartScript(allStats) {
   if(cc) new Chart(cc,{type:'bar',data:{labels:${labels},datasets:[
     {data:${carbs},backgroundColor:${carbBg},borderColor:${carbBdr},borderWidth:2,borderRadius:5},
     {data:Array(7).fill(${dl}),type:'line',borderColor:'#f59e0b',borderWidth:2,borderDash:[5,5],pointRadius:0,fill:false}
+  ]},options:base()});
+  const fc=document.getElementById('fat-${uid}');
+  if(fc) new Chart(fc,{type:'bar',data:{labels:${labels},datasets:[
+    {data:${fats},backgroundColor:${fatBg},borderColor:${fatBdr},borderWidth:2,borderRadius:5},
+    {data:Array(7).fill(${fl}),type:'line',borderColor:'#dc2626',borderWidth:2,borderDash:[5,5],pointRadius:0,fill:false}
+  ]},options:base()});
+  const pc=document.getElementById('prot-${uid}');
+  if(pc) new Chart(pc,{type:'bar',data:{labels:${labels},datasets:[
+    {data:${prots},backgroundColor:${protBg},borderColor:${protBdr},borderWidth:2,borderRadius:5},
+    {data:Array(7).fill(${pg}),type:'line',borderColor:'#2563eb',borderWidth:2,borderDash:[5,5],pointRadius:0,fill:false}
   ]},options:base()});
   const wc=document.getElementById('water-${uid}');
   if(wc) new Chart(wc,{type:'bar',data:{labels:${labels},datasets:[
@@ -417,7 +501,7 @@ footer{text-align:center;color:#94a3b8;font-size:.78rem;padding:16px 0 8px}
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-function generateHTML(usersData) {
+function generateHTML(usersData, foodsData) {
   const today = dateKey(0);
   const now = new Date().toLocaleString('he-IL', {
     timeZone: 'Asia/Jerusalem',
@@ -425,7 +509,7 @@ function generateHTML(usersData) {
     hour: '2-digit', minute: '2-digit',
   });
 
-  const allStats  = computeStats(usersData);
+  const allStats  = computeStats(usersData, foodsData);
   const sections  = allStats.map(s => userSection(s, today)).join('\n');
   const userCount = allStats.length;
 

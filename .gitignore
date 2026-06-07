@@ -1,4 +1,9 @@
 node_modules/
 .env
+.env.local
+.env.production
 data-test/
 dashboard.html
+
+# User data — contains personal food logs and OAuth tokens
+data/users.json

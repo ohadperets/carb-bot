@@ -142,6 +142,27 @@ bot.command('limit', (ctx) => {
   ctx.reply(`✅ המגבלה שונתה ל-${newLimit} מנות.`);
 });
 
+// ─── /setweight ───────────────────────────────────────────
+bot.command('setweight', (ctx) => {
+  const args = ctx.message.text.split(' ');
+  if (args.length < 2) {
+    const user = storage.getUser(ctx.from.id);
+    ctx.reply(
+      `⚖️ המשקל הנוכחי שלך: ${user?.weight || 70} ק"ג\n` +
+      `(ישמש ליעד חלבון יומי של ${user?.weight || 70} גרם)\n` +
+      `לשינוי: /setweight <משקל>`
+    );
+    return;
+  }
+  const kg = parseFloat(args[1]);
+  if (isNaN(kg) || kg < 30 || kg > 250) {
+    ctx.reply('❌ מספר לא תקין (30-250)');
+    return;
+  }
+  storage.setWeight(ctx.from.id, kg);
+  ctx.reply(`✅ משקל עודכן ל-${kg} ק"ג | יעד חלבון: ${kg} גרם/יום`);
+});
+
 // ─── /sync (debug) ────────────────────────────────────────
 bot.command('sync', async (ctx) => {
   const result = await storage.syncToCloud();
@@ -155,7 +176,7 @@ bot.command('dashboard', async (ctx) => {
   }
   await ctx.reply('⏳ מכין דשבורד...');
   try {
-    const html = generateHTML(storage.loadUsers());
+    const html = generateHTML(storage.loadUsers(), storage.getAllFoods());
     const dateStr = new Date().toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' }).replace(/\//g, '-');
     await ctx.replyWithDocument(
       { source: Buffer.from(html, 'utf8'), filename: `dashboard-${dateStr}.html` },
@@ -251,12 +272,13 @@ bot.command('foods', (ctx) => {
     return;
   }
 
-  // Group by portions
+  // Group by carbs
   const grouped = {};
-  entries.forEach(([name, portions]) => {
-    const key = portions;
-    if (!grouped[key]) grouped[key] = [];
-    grouped[key].push(name);
+  entries.forEach(([name, data]) => {
+    if (name.startsWith('_')) return;
+    const carbs = typeof data === 'number' ? data : (data.carbs ?? 0);
+    if (!grouped[carbs]) grouped[carbs] = [];
+    grouped[carbs].push(name);
   });
 
   // Sort by portions
@@ -519,12 +541,31 @@ bot.on('text', (ctx) => {
         ctx.reply('❌ שלח מספר בין 1 ל-50');
         return;
       }
-      storage.createUser(userId, ctx.from.first_name, limit);
+      userStates[userId] = { action: 'set_weight', dailyLimit: limit };
+      ctx.reply(
+        `✅ מגבלת פחמימות: ${limit} מנות.\n\n` +
+        `💪 כמה אתה שוקל בק"ג? (המספר ישמש ליעד החלבון היומי שלך)\n` +
+        `למשל: 75`
+      );
+      return;
+    }
+
+    if (userStates[userId]?.action === 'set_weight') {
+      const kg = parseFloat(text);
+      if (isNaN(kg) || kg < 30 || kg > 250) {
+        ctx.reply('❌ שלח משקל תקין בק"ג (30-250)');
+        return;
+      }
+      const { dailyLimit } = userStates[userId];
+      storage.createUser(userId, ctx.from.first_name, dailyLimit, kg);
       delete userStates[userId];
       ctx.reply(
-        `✅ מעולה! המגבלה היומית שלך: ${limit} מנות.\n\n` +
+        `✅ מעולה! ההגדרות שלך:\n` +
+        `🍞 מגבלת פחמימות: ${dailyLimit} מנות\n` +
+        `🧈 מגבלת שומן: 8 נקודות\n` +
+        `💪 יעד חלבון: ${kg} גרם (לפי משקל ${kg}ק"ג)\n\n` +
         `עכשיו פשוט שלח את שם המאכל שאכלת.\n` +
-        `למשל: "פיתה", "2 בננות", "3 משולשי פיצה"`
+        `למשל: "פיתה", "2 בננות", "חזה עוף"`
       );
       return;
     }
@@ -684,7 +725,13 @@ bot.on('text', (ctx) => {
   // Look up food in DB
   const food = storage.findFood(foodName);
 
-  if (food) {
+  if (food && food.matchType === 'exact') {
+    // ── Salad special case: show ingredient picker ──────────
+    if (food.name === 'סלט') {
+      showSaladPicker(ctx);
+      return;
+    }
+
     const totalPortions = food.portions * quantity;
     const status = storage.getTodayStatus(userId);
 
@@ -706,6 +753,19 @@ bot.on('text', (ctx) => {
       `✅ ${quantity > 1 ? quantity + ' × ' : ''}${food.name} = ${totalPortions} מנות\n` +
       formatQuickStatus(newStatus)
     );
+
+  } else if (food && food.matchType === 'partial') {
+    // ── Partial match: ask confirmation ─────────────────────
+    userStates[userId] = { action: 'confirm_partial_match', food, quantity, originalInput: foodName };
+    ctx.reply(
+      `🔍 "${foodName}" לא נמצא במאגר.\n` +
+      `האם התכוונת ל-"${food.name}"? (${food.carbs} מנות פחמימה)`,
+      Markup.inlineKeyboard([[
+        Markup.button.callback(`✅ כן, "${food.name}"`, 'match_yes'),
+        Markup.button.callback('❌ לא, הוסף חדש', 'match_no'),
+      ]])
+    );
+
   } else {
     // Unknown food - ask for portions
     userStates[userId] = { action: 'add_food_portions', foodName, quantity };
@@ -714,6 +774,99 @@ bot.on('text', (ctx) => {
       `כמה מנות פחמימה זה? (1 מנה = 15 גרם פחמימה)`
     );
   }
+});
+
+// ─── Partial-match confirmation callbacks ─────────────────
+bot.action('match_yes', (ctx) => {
+  const userId = ctx.from.id;
+  const state  = userStates[userId];
+  if (!state || state.action !== 'confirm_partial_match') {
+    ctx.answerCbQuery();
+    return;
+  }
+
+  const { food, quantity } = state;
+  delete userStates[userId];
+  ctx.answerCbQuery(`✅ נוסף: ${food.name}`);
+
+  const totalPortions = food.portions * quantity;
+  const status = storage.getTodayStatus(userId);
+
+  if (status.total + totalPortions > status.limit) {
+    const willBe = status.total + totalPortions;
+    ctx.editMessageText(
+      `⚠️ אזהרה! ${quantity > 1 ? quantity + ' ' : ''}${food.name} = ${totalPortions} מנות.\n` +
+      `אתה על ${status.total}/${status.limit}, תגיע ל-${willBe}!\n\nלהוסיף בכל זאת? שלח "כן" או "לא"`,
+      { reply_markup: undefined }
+    );
+    userStates[userId] = { action: 'confirm_over', foodName: food.name, portions: totalPortions };
+    return;
+  }
+
+  storage.addPortions(userId, food.name, totalPortions);
+  const newStatus = storage.getTodayStatus(userId);
+  ctx.editMessageText(
+    `✅ ${quantity > 1 ? quantity + ' × ' : ''}${food.name} = ${totalPortions} מנות\n` +
+    formatQuickStatus(newStatus),
+    { reply_markup: undefined }
+  );
+});
+
+bot.action('match_no', (ctx) => {
+  const userId = ctx.from.id;
+  const state  = userStates[userId];
+  if (!state || state.action !== 'confirm_partial_match') {
+    ctx.answerCbQuery();
+    return;
+  }
+  const { originalInput, quantity } = state;
+  userStates[userId] = { action: 'add_food_portions', foodName: originalInput, quantity };
+  ctx.answerCbQuery();
+  ctx.editMessageText(
+    `🆕 הוספת "${originalInput}" כמאכל חדש.\nכמה מנות פחמימה זה? (1 מנה = 15 גרם)`,
+    { reply_markup: undefined }
+  );
+});
+
+// ─── Salad ingredient picker ──────────────────────────────
+const SALAD_ROWS = [
+  ['עגבניה', 'מלפפון', 'חסה', 'גמבה'],
+  ['בצל', 'גזר', 'פטריות', 'זיתים'],
+  ['טונה', 'ביצה קשה', 'גבינה צפתית', 'אבוקדו'],
+  ['פלפל אדום', 'צנונית', 'גבינה לבנה', 'גבינת פטה'],
+  ['כרוב', 'רוקט', 'עלי תרד', 'סלמון נא'],
+];
+
+function saladKeyboard() {
+  const rows = SALAD_ROWS.map(row =>
+    row.map(item => Markup.button.callback(item, `salad_add:${item}`))
+  );
+  rows.push([Markup.button.callback('✅ סיימתי', 'salad_done')]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function showSaladPicker(ctx) {
+  ctx.reply('🥗 בחר/י מרכיבי הסלט — לחץ/י להוסיף:', saladKeyboard());
+}
+
+bot.action(/^salad_add:(.+)$/, (ctx) => {
+  const userId    = ctx.from.id;
+  const itemName  = ctx.match[1];
+  const food      = storage.findFood(itemName);
+  const portions  = food ? food.portions : 0;
+
+  storage.addPortions(userId, food ? food.name : itemName, portions);
+  ctx.answerCbQuery(`✅ ${itemName} נוסף`);
+});
+
+bot.action('salad_done', (ctx) => {
+  const userId = ctx.from.id;
+  const status = storage.getTodayStatus(userId);
+  ctx.answerCbQuery('✅ סלט נשמר');
+  ctx.editMessageText(
+    `🥗 הסלט נשמר!\n${formatQuickStatus(status)}`,
+    { reply_markup: undefined }
+  );
 });
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -726,16 +879,36 @@ function parseInput(text) {
   return { quantity: 1, foodName: text };
 }
 
-function formatStatus(firstName, status) {
-  const progress = Math.min(status.total / status.limit, 1);
-  const filled = Math.round(progress * 10);
-  const empty = 10 - filled;
-  const bar = '🟩'.repeat(filled) + '⬜'.repeat(empty);
+function makeBar(value, limit, filledEmoji, emptyEmoji = '⬜', size = 10) {
+  const pct  = Math.min(value / (limit || 1), 1);
+  const done = Math.round(pct * size);
+  return filledEmoji.repeat(done) + emptyEmoji.repeat(size - done) + ` ${Math.round(pct * 100)}%`;
+}
 
+function formatStatus(firstName, status) {
   let msg = `📊 ${firstName} - סטטוס יומי\n\n`;
-  msg += `${bar} ${Math.round(progress * 100)}%\n`;
-  msg += `נצרך: ${status.total}/${status.limit} מנות\n`;
-  msg += `נשאר: ${Math.max(0, status.remaining)} מנות\n`;
+
+  // Carbs
+  msg += `🍞 פחמימות: ${status.total}/${status.limit} מנות\n`;
+  msg += `${makeBar(status.total, status.limit, '🟩')}\n`;
+  if (status.remaining <= 0)    msg += `🚫 חריגה של ${(status.total - status.limit).toFixed(1)}!\n`;
+  else if (status.remaining <= 2) msg += `⚡ נשאר ${status.remaining.toFixed(1)} מנות בלבד!\n`;
+  else                          msg += `נשאר: ${status.remaining.toFixed(1)} מנות\n`;
+
+  // Fat
+  const fatR = (status.fatLimit - status.fatTotal).toFixed(1);
+  msg += `\n🧈 שומן: ${status.fatTotal}/${status.fatLimit} נקודות\n`;
+  msg += `${makeBar(status.fatTotal, status.fatLimit, '🟧')}\n`;
+  msg += status.fatTotal >= status.fatLimit
+    ? `🚫 חריגה בשומן!\n`
+    : `נשאר: ${fatR} נקודות\n`;
+
+  // Protein
+  const proteinR = Math.max(0, status.proteinGoal - status.proteinTotal).toFixed(1);
+  const proteinPct = Math.round(Math.min(status.proteinTotal / (status.proteinGoal || 1), 1) * 100);
+  msg += `\n💪 חלבון: ${status.proteinTotal}/${status.proteinGoal} גרם\n`;
+  msg += `${makeBar(status.proteinTotal, status.proteinGoal, '🟦')}\n`;
+  msg += proteinPct >= 100 ? `✅ יעד חלבון הושג!\n` : `עוד: ${proteinR} גרם\n`;
 
   if (status.entries.length > 0) {
     msg += `\n📝 היום:\n`;
@@ -744,13 +917,17 @@ function formatStatus(firstName, status) {
     });
   }
 
-  if (status.remaining <= 0) {
-    msg += `\n🚫 עברת את המגבלה!`;
-  } else if (status.remaining <= 2) {
-    msg += `\n⚡ כמעט הגעת למגבלה!`;
-  }
-
   return msg;
+}
+
+function formatStatusLine(u) {
+  const fatOk  = u.fatTotal <= u.fatLimit;
+  const protPct = Math.round(Math.min(u.proteinTotal / (u.proteinGoal || 1), 1) * 100);
+  return (
+    `🍞 ${u.fatTotal !== undefined ? `${u.total}/${u.limit}` : `${u.total}/${u.limit}`} מנות` +
+    (u.fatTotal   !== undefined ? `  🧈 ${u.fatTotal}/${u.fatLimit}` + (fatOk ? '' : '🚫') : '') +
+    (u.proteinTotal !== undefined ? `  💪 ${u.proteinTotal}/${u.proteinGoal}גר` : '')
+  );
 }
 
 function formatWaterStatus(firstName, status) {
@@ -776,7 +953,10 @@ function formatWaterStatus(firstName, status) {
 
 function formatQuickStatus(status) {
   const emoji = status.remaining <= 0 ? '🚫' : status.remaining <= 2 ? '⚡' : '📊';
-  return `${emoji} סה"כ: ${status.total}/${status.limit} | נשאר: ${Math.max(0, status.remaining)}`;
+  let msg = `${emoji} פח: ${status.total}/${status.limit}`;
+  if (status.fatTotal   !== undefined) msg += ` | 🧈 ${status.fatTotal}/${status.fatLimit}`;
+  if (status.proteinTotal !== undefined) msg += ` | 💪 ${status.proteinTotal}/${status.proteinGoal}גר`;
+  return msg;
 }
 
 // ─── Scheduled status every 4 hours (8,12,16,20) ─────────
@@ -799,6 +979,14 @@ cron.schedule('0 8,12,16,20 * * *', async () => {
 
     msg += `\n${emoji} ${u.firstName}\n`;
     msg += `${bar} ${u.total}/${u.limit} מנות\n`;
+
+    // Fat & protein inline
+    if (u.fatTotal !== undefined) {
+      const fatBar  = makeBar(u.fatTotal,   u.fatLimit,   '🟧', '⬜', 8);
+      const protBar = makeBar(u.proteinTotal, u.proteinGoal, '🟦', '⬜', 8);
+      msg += `   🧈 ש: ${u.fatTotal}/${u.fatLimit}  ${fatBar}\n`;
+      msg += `   💪 ח: ${u.proteinTotal}/${u.proteinGoal}גר  ${protBar}\n`;
+    }
 
     if (u.entries.length > 0) {
       u.entries.forEach((e) => {
@@ -831,7 +1019,7 @@ cron.schedule('0 8,12,16,20 * * *', async () => {
     }
   });
 
-  const statusDashBuf = Buffer.from(generateHTML(storage.loadUsers()), 'utf8');
+  const statusDashBuf = Buffer.from(generateHTML(storage.loadUsers(), storage.getAllFoods()), 'utf8');
 
   for (const chatId of groups) {
     try {
@@ -868,6 +1056,14 @@ cron.schedule('0 23 * * *', async () => {
 
     msg += `\n${emoji} ${u.firstName} - ${verdict}\n`;
     msg += `${bar} ${u.total}/${u.limit} מנות\n`;
+
+    // Fat & protein summary
+    if (u.fatTotal !== undefined) {
+      const fatEmoji = u.fatTotal <= u.fatLimit ? '✅' : '🚫';
+      const protEmoji = u.proteinTotal >= u.proteinGoal ? '✅' : '⚠️';
+      msg += `   ${fatEmoji} שומן: ${u.fatTotal}/${u.fatLimit} נקודות\n`;
+      msg += `   ${protEmoji} חלבון: ${u.proteinTotal}/${u.proteinGoal} גרם\n`;
+    }
 
     if (u.entries.length > 0) {
       msg += `📝 מה אכל/ה:\n`;
@@ -958,7 +1154,7 @@ cron.schedule('0 21 * * 5', async () => {
   msg += `\n━━━━━━━━━━━━━━━━━━\n`;
   msg += `שבת שלום! 🕯️`;
 
-  const dashboardHtml = generateHTML(storage.loadUsers());
+  const dashboardHtml = generateHTML(storage.loadUsers(), storage.getAllFoods());
   const dashBuf = Buffer.from(dashboardHtml, 'utf8');
 
   for (const chatId of groups) {
