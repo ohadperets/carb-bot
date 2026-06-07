@@ -617,5 +617,6 @@
   "מוס גבינה":              { "carbs": 2,    "fat": 2,   "protein": 8   },
   "פרפה":                   { "carbs": 3,    "fat": 2,   "protein": 5   },
   "אסאי":                   { "carbs": 3,    "fat": 1,   "protein": 3   },
-  "סמוזי":                  { "carbs": 2,    "fat": 0.3, "protein": 2   }
+  "סמוזי":                  { "carbs": 2,    "fat": 0.3, "protein": 2   },
+  "שוקולד מריר 85%":        { "carbs": 0.3,  "fat": 1.5, "protein": 1.5 }
 }
