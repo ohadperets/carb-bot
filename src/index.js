@@ -926,7 +926,7 @@ function formatStatus(firstName, status) {
     status.entries.forEach((e) => {
       const f = (n) => parseFloat((n || 0).toFixed(1));
       msg += `  ${e.time} • ${e.item}`;
-      msg += `  (פח:${f(e.portions)} 🧈${f(e.fat)} 💪${f(e.protein)})\n`;
+      msg += `  (פחמימה: ${f(e.portions)},  שומן: ${f(e.fat)}, חלבון: ${f(e.protein)})\n`;
     });
   }
 
