@@ -430,15 +430,21 @@ bot.command('addfood', (ctx) => {
     ctx.reply('🍽️ מה שם המאכל שתרצה להוסיף?');
     return;
   }
-  // Support inline: /addfood שם_מאכל מנות
+  // Support inline: /addfood שם_מאכל פחמימות [שומן] [חלבון]
   const parts = args.split(/\s+/);
-  const portions = parseFloat(parts[parts.length - 1]);
-  if (parts.length >= 2 && !isNaN(portions)) {
-    const name = parts.slice(0, -1).join(' ');
-    storage.addFood(name, portions);
-    ctx.reply(`✅ "${name}" נוסף למאגר (${portions} מנות)`);
+  // Collect up to 3 trailing numeric tokens: carbs [fat] [protein].
+  const nums = [];
+  while (parts.length > 1 && nums.length < 3 && !isNaN(parseFloat(parts[parts.length - 1]))) {
+    nums.unshift(parseFloat(parts.pop()));
+  }
+  const name = parts.join(' ');
+  if (name && nums.length >= 1) {
+    const [carbs, fat = 0, protein = 0] = nums;
+    storage.addFood(name, carbs, fat, protein);
+    ctx.reply(`✅ "${name}" נוסף למאגר:\n🍞 ${carbs} פחמימות · 🧈 ${fat} שומן · 💪 ${protein}ג׳ חלבון`);
   } else {
-    userStates[ctx.from.id] = { action: 'add_food_portions', foodName: args };
+    // Only a name was given → start the guided add (carbs → fat → protein).
+    userStates[ctx.from.id] = { action: 'add_food_carbs', foodName: args };
     ctx.reply(`כמה מנות פחמימה ב"${args}"? (שלח מספר, למשל 1 או 0.5)`);
   }
 });
@@ -691,23 +697,47 @@ bot.on('text', (ctx) => {
     return;
   }
 
-  // Check if waiting for portions for new food
+  // Guided add-food flow: name → carbs → fat → protein
   if (userStates[userId]?.action === 'add_food_name') {
-    userStates[userId] = { action: 'add_food_portions_only', foodName: text };
+    userStates[userId] = { action: 'add_food_carbs', foodName: text };
     ctx.reply(`כמה מנות פחמימה ב"${text}"? (שלח מספר, למשל 1 או 0.5)`);
     return;
   }
 
-  if (userStates[userId]?.action === 'add_food_portions_only') {
-    const portions = parseFloat(text);
-    if (isNaN(portions) || portions < 0 || portions > 50) {
+  if (userStates[userId]?.action === 'add_food_carbs') {
+    const carbs = parseFloat(text);
+    if (isNaN(carbs) || carbs < 0 || carbs > 50) {
       ctx.reply('❌ שלח מספר מנות תקין (0-50)');
       return;
     }
-    const foodName = userStates[userId].foodName;
-    storage.addFood(foodName, portions);
+    const { foodName } = userStates[userId];
+    userStates[userId] = { action: 'add_food_fat', foodName, carbs };
+    ctx.reply(`🧈 כמה נקודות שומן ב"${foodName}"? (שלח מספר, או 0 אם אין)`);
+    return;
+  }
+
+  if (userStates[userId]?.action === 'add_food_fat') {
+    const fat = parseFloat(text);
+    if (isNaN(fat) || fat < 0 || fat > 50) {
+      ctx.reply('❌ שלח מספר שומן תקין (0-50), או 0');
+      return;
+    }
+    const { foodName, carbs } = userStates[userId];
+    userStates[userId] = { action: 'add_food_protein', foodName, carbs, fat };
+    ctx.reply(`💪 כמה גרם חלבון ב"${foodName}"? (שלח מספר, או 0)`);
+    return;
+  }
+
+  if (userStates[userId]?.action === 'add_food_protein') {
+    const protein = parseFloat(text);
+    if (isNaN(protein) || protein < 0 || protein > 200) {
+      ctx.reply('❌ שלח מספר חלבון תקין (0-200), או 0');
+      return;
+    }
+    const { foodName, carbs, fat } = userStates[userId];
+    storage.addFood(foodName, carbs, fat, protein);
     delete userStates[userId];
-    ctx.reply(`✅ "${foodName}" נוסף למאגר (${portions} מנות)`);
+    ctx.reply(`✅ "${foodName}" נוסף למאגר:\n🍞 ${carbs} פחמימות · 🧈 ${fat} שומן · 💪 ${protein}ג׳ חלבון`);
     return;
   }
 

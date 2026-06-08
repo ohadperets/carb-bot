@@ -298,14 +298,16 @@ function findFood(name) {
   return bestMatch;
 }
 
-function addFood(name, portions) {
+function addFood(name, portions, fat, protein) {
   const foods = loadFoods();
   const existing = foods[name];
-  if (existing && typeof existing === 'object') {
-    foods[name] = { ...existing, carbs: portions };
-  } else {
-    foods[name] = { carbs: portions, fat: 0, protein: 0 };
-  }
+  const base = (existing && typeof existing === 'object') ? existing : { carbs: 0, fat: 0, protein: 0 };
+  foods[name] = {
+    carbs: portions,
+    // Keep the previous fat/protein when not supplied (e.g. quick carb-only edits).
+    fat:     (fat     !== undefined && fat     !== null) ? fat     : (base.fat     ?? 0),
+    protein: (protein !== undefined && protein !== null) ? protein : (base.protein ?? 0),
+  };
   saveFoods(foods);
 }
 
