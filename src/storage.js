@@ -6,6 +6,7 @@ const { INITIAL_FOODS } = require('./carbs');
 const USERS_FILE = path.join(config.dataDir, 'users.json');
 const FOODS_FILE = path.join(config.dataDir, 'foods.json');
 const GROUPS_FILE = path.join(config.dataDir, 'groups.json');
+const KNOWN_USERS_FILE = path.join(config.dataDir, 'known_users.json');
 
 // Ensure data directory exists
 if (!fs.existsSync(config.dataDir)) {
@@ -199,14 +200,32 @@ async function pullFromCloud() {
     }
   }
 
-  // 2. Per-user backup: restore any users missing from the local file
-  const currentData = loadUsers();
-  const knownIds = Object.keys(currentData);
+  // 2. Per-user backup: restore every known user, even if absent from the local file.
+  //    Known IDs come from the persistent registry UNION the current local file,
+  //    so a wiped/empty users.json no longer means "nobody to restore".
+  const localIds = Object.keys(loadUsers());
+  const knownIds = Array.from(new Set([...loadKnownUsers(), ...localIds]));
   if (knownIds.length > 0) {
     console.log(`🔄 Attempting per-user restore for ${knownIds.length} known user(s)...`);
     for (const userId of knownIds) {
       await restoreUserFromTelegram(userId);
     }
+  }
+}
+
+// ─── Known-users registry (survives a users.json reset) ───────
+function loadKnownUsers() {
+  const ids = loadJSON(KNOWN_USERS_FILE, []);
+  return Array.isArray(ids) ? ids.map(String) : [];
+}
+
+function registerKnownUser(userId) {
+  if (userId === undefined || userId === null) return;
+  const id = String(userId);
+  const ids = loadKnownUsers();
+  if (!ids.includes(id)) {
+    ids.push(id);
+    fs.writeFileSync(KNOWN_USERS_FILE, JSON.stringify(ids, null, 2), 'utf8');
   }
 }
 
@@ -295,6 +314,7 @@ function saveUsers(data) {
   fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2), 'utf8');
   scheduleSyncToCloud();
   for (const uid of Object.keys(data)) {
+    registerKnownUser(uid);
     scheduleUserBackup(uid);
   }
 }
@@ -696,6 +716,8 @@ function setStepsGoal(userId, goal) {
 
 module.exports = {
   loadUsers,
+  loadKnownUsers,
+  registerKnownUser,
   findFood,
   addFood,
   deleteFood,

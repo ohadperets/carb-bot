@@ -18,10 +18,15 @@ const bot = new Telegraf(config.botToken);
 // Track users waiting for input (userId -> state)
 const userStates = {};
 
-// ─── Track group chats ────────────────────────────────────
+// ─── Track group chats + register known users ─────────────
 bot.use((ctx, next) => {
   if (ctx.chat && (ctx.chat.type === 'group' || ctx.chat.type === 'supergroup')) {
     storage.saveGroup(ctx.chat.id);
+  }
+  // Remember every user we ever see, so a clean restart can restore them
+  // from their personal Telegram backup even if users.json is empty.
+  if (ctx.from && !ctx.from.is_bot) {
+    storage.registerKnownUser(ctx.from.id);
   }
   return next();
 });
