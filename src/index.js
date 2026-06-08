@@ -175,6 +175,27 @@ bot.command('sync', async (ctx) => {
   ctx.reply(`סנכרון: ${result}\nPORT=${process.env.PORT || 'unset'} listening=${config.port}`);
 });
 
+// ─── /restore - Restore personal data from pinned backup ────
+bot.command('restore', async (ctx) => {
+  const userId = ctx.from.id;
+  await ctx.reply('🔄 מנסה לשחזר את הנתונים שלך...');
+  const ok = await storage.restoreUserFromTelegram(userId);
+  if (ok) {
+    const status = storage.getTodayStatus(userId);
+    ctx.reply(
+      `✅ הנתונים שוחזרו בהצלחה!\n` +
+      `מגבלה יומית: ${status.limit} מנות\n` +
+      `צרכת היום: ${status.total} מנות`
+    );
+  } else {
+    ctx.reply(
+      `❌ לא נמצא גיבוי אישי.\n` +
+      `אם נרשמת לפני כן, ייתכן שהגיבוי טרם נוצר.\n` +
+      `השתמש ב-/start להרשמה מחדש.`
+    );
+  }
+});
+
 // ─── /dashboard ───────────────────────────────────────────
 bot.command('dashboard', async (ctx) => {
   if (!storage.getUser(ctx.from.id)) {
@@ -1438,17 +1459,13 @@ async function start() {
     console.log(`🌐 HTTP server on port ${config.port}`);
   });
 
-  // Warn loudly if backup/restore is disabled (missing SYNC_CHAT_ID env var)
   if (!config.syncChatId) {
-    console.error('⚠️  WARNING: SYNC_CHAT_ID is not set. Telegram backup/restore is DISABLED.');
-    console.error('⚠️  User data will be lost on every redeploy. Set SYNC_CHAT_ID in env vars.');
+    console.log('ℹ️  SYNC_CHAT_ID not set — using per-user Telegram backups only.');
   }
 
-  // Pull data from cloud on fresh deploy
+  // Pull data from cloud on fresh deploy (central backup + per-user backups)
   await storage.pullFromCloud();
-  if (config.syncChatId) {
-    console.log('✅ Cloud restore complete.');
-  }
+  console.log('✅ Cloud restore complete.');
 
   const meRes = await fetch(`${API_BASE}/getMe`);
   const meData = await meRes.json();
@@ -1480,6 +1497,7 @@ async function start() {
         { command: 'export', description: '📦 ייצא נתונים (JSON + CSV)' },
         { command: 'reset', description: 'אפס את היום' },
         { command: 'dashboard', description: '📊 דשבורד HTML' },
+        { command: 'restore', description: '🔄 שחזר נתונים אחרי פריסה מחדש' },
       ],
     }),
   });

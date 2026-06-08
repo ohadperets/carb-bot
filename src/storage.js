@@ -17,6 +17,85 @@ let syncTimer = null;
 const SYNC_DELAY = 10000; // 10 seconds debounce
 const API_BASE = `https://api.telegram.org/bot${config.botToken}`;
 
+// ─── Per-user backup (debounced) ────────────────────────────
+const userBackupTimers = {};
+const USER_BACKUP_DELAY = 10000;
+
+function scheduleUserBackup(userId) {
+  if (!config.botToken) return;
+  if (userBackupTimers[userId]) clearTimeout(userBackupTimers[userId]);
+  userBackupTimers[userId] = setTimeout(() => backupUserToTelegram(userId), USER_BACKUP_DELAY);
+}
+
+async function backupUserToTelegram(userId) {
+  try {
+    const data = loadUsers();
+    if (!data[userId]) return;
+
+    const payload = { [userId]: data[userId] };
+    const jsonContent = JSON.stringify(payload, null, 2);
+    const blob = new Blob([jsonContent], { type: 'application/json' });
+    const formData = new FormData();
+    formData.append('chat_id', userId);
+    formData.append('document', blob, 'my_data.json');
+    formData.append('disable_notification', 'true');
+
+    const sendRes = await fetch(`${API_BASE}/sendDocument`, { method: 'POST', body: formData });
+    if (!sendRes.ok) return;
+    const { result } = await sendRes.json();
+
+    await fetch(`${API_BASE}/unpinAllChatMessages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: userId }),
+    });
+    await fetch(`${API_BASE}/pinChatMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: userId, message_id: result.message_id, disable_notification: true }),
+    });
+    console.log(`💾 Backed up data for user ${userId}`);
+  } catch (err) {
+    console.error(`User backup error (${userId}):`, err.message);
+  }
+}
+
+async function restoreUserFromTelegram(userId) {
+  try {
+    const chatRes = await fetch(`${API_BASE}/getChat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: userId }),
+    });
+    if (!chatRes.ok) return false;
+    const { result: chat } = await chatRes.json();
+    if (!chat.pinned_message?.document) return false;
+
+    const fileRes = await fetch(`${API_BASE}/getFile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_id: chat.pinned_message.document.file_id }),
+    });
+    if (!fileRes.ok) return false;
+    const { result: fileInfo } = await fileRes.json();
+
+    const dlRes = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${fileInfo.file_path}`);
+    if (!dlRes.ok) return false;
+    const backup = await dlRes.json();
+
+    if (!backup[userId]) return false;
+
+    const data = loadUsers();
+    data[userId] = backup[userId];
+    fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    console.log(`📥 Restored user ${userId} from personal backup`);
+    return true;
+  } catch (err) {
+    console.error(`User restore error (${userId}):`, err.message);
+    return false;
+  }
+}
+
 function scheduleSyncToCloud() {
   if (!config.botToken || !config.syncChatId) return;
   if (syncTimer) clearTimeout(syncTimer);
@@ -79,43 +158,55 @@ async function syncToCloud() {
 
 // ─── Pull data from Telegram on startup ─────────────────────
 async function pullFromCloud() {
-  if (!config.botToken || !config.syncChatId) return;
-  try {
-    // Get pinned message from chat
-    const chatRes = await fetch(`${API_BASE}/getChat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: config.syncChatId }),
-    });
-    if (!chatRes.ok) return;
-    const { result: chat } = await chatRes.json();
-    if (!chat.pinned_message || !chat.pinned_message.document) return;
+  if (!config.botToken) return;
 
-    // Download the backup file
-    const fileId = chat.pinned_message.document.file_id;
-    const fileRes = await fetch(`${API_BASE}/getFile`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_id: fileId }),
-    });
-    if (!fileRes.ok) return;
-    const { result: fileInfo } = await fileRes.json();
-
-    const downloadRes = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${fileInfo.file_path}`);
-    if (!downloadRes.ok) return;
-    const data = await downloadRes.json();
-
-    // Restore user/group data only — foods.json is managed in git, never overwrite it
-    const mapping = { users: 'users.json', groups: 'groups.json' };
-    for (const [key, file] of Object.entries(mapping)) {
-      if (data[key]) {
-        const localPath = path.join(config.dataDir, file);
-        fs.writeFileSync(localPath, JSON.stringify(data[key], null, 2), 'utf8');
-        console.log(`📥 Restored ${file} from Telegram backup`);
+  // 1. Try central backup first (if SYNC_CHAT_ID is configured)
+  if (config.syncChatId) {
+    try {
+      const chatRes = await fetch(`${API_BASE}/getChat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: config.syncChatId }),
+      });
+      if (chatRes.ok) {
+        const { result: chat } = await chatRes.json();
+        if (chat.pinned_message?.document) {
+          const fileId = chat.pinned_message.document.file_id;
+          const fileRes = await fetch(`${API_BASE}/getFile`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_id: fileId }),
+          });
+          if (fileRes.ok) {
+            const { result: fileInfo } = await fileRes.json();
+            const downloadRes = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${fileInfo.file_path}`);
+            if (downloadRes.ok) {
+              const data = await downloadRes.json();
+              const mapping = { users: 'users.json', groups: 'groups.json' };
+              for (const [key, file] of Object.entries(mapping)) {
+                if (data[key]) {
+                  const localPath = path.join(config.dataDir, file);
+                  fs.writeFileSync(localPath, JSON.stringify(data[key], null, 2), 'utf8');
+                  console.log(`📥 Restored ${file} from central Telegram backup`);
+                }
+              }
+            }
+          }
+        }
       }
+    } catch (err) {
+      console.error('Central Telegram pull error:', err.message);
     }
-  } catch (err) {
-    console.error('Telegram pull error:', err.message);
+  }
+
+  // 2. Per-user backup: restore any users missing from the local file
+  const currentData = loadUsers();
+  const knownIds = Object.keys(currentData);
+  if (knownIds.length > 0) {
+    console.log(`🔄 Attempting per-user restore for ${knownIds.length} known user(s)...`);
+    for (const userId of knownIds) {
+      await restoreUserFromTelegram(userId);
+    }
   }
 }
 
@@ -201,7 +292,11 @@ function loadUsers() {
 }
 
 function saveUsers(data) {
-  saveJSON(USERS_FILE, data);
+  fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2), 'utf8');
+  scheduleSyncToCloud();
+  for (const uid of Object.keys(data)) {
+    scheduleUserBackup(uid);
+  }
 }
 
 function getUser(userId) {
@@ -633,4 +728,6 @@ module.exports = {
   setStepsGoal,
   pullFromCloud,
   syncToCloud,
+  restoreUserFromTelegram,
+  backupUserToTelegram,
 };
