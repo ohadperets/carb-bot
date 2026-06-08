@@ -5,6 +5,8 @@ const { Telegraf, Markup } = require('telegraf');
 const cron = require('node-cron');
 const config = require('./config');
 const storage = require('./storage');
+const datastore = require('./datastore');
+const { seedIfEmpty } = require('./seed');
 const { generateHTML } = require('./dashboard');
 
 
@@ -1468,6 +1470,12 @@ async function start() {
     console.log('ℹ️  SYNC_CHAT_ID not set — using per-user Telegram backups only.');
   }
 
+  // Connect the database (or fall back to local files) before anything reads data.
+  await datastore.init();
+
+  // First Railway deploy with an empty DB → import the bundled seed data once.
+  await seedIfEmpty();
+
   // Pull data from cloud on fresh deploy (central backup + per-user backups)
   await storage.pullFromCloud();
   console.log('✅ Cloud restore complete.');
@@ -1516,5 +1524,5 @@ start().catch((err) => {
   process.exit(1);
 });
 
-process.once('SIGINT', () => process.exit(0));
-process.once('SIGTERM', () => process.exit(0));
+process.once('SIGINT', async () => { await datastore.close().catch(() => {}); process.exit(0); });
+process.once('SIGTERM', async () => { await datastore.close().catch(() => {}); process.exit(0); });

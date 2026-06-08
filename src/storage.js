@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const config = require('./config');
+const datastore = require('./datastore');
 const { INITIAL_FOODS } = require('./carbs');
 
 const USERS_FILE = path.join(config.dataDir, 'users.json');
@@ -23,12 +24,14 @@ const userBackupTimers = {};
 const USER_BACKUP_DELAY = 10000;
 
 function scheduleUserBackup(userId) {
+  if (datastore.USE_DB) return; // DB is the source of truth — no Telegram backup
   if (!config.botToken) return;
   if (userBackupTimers[userId]) clearTimeout(userBackupTimers[userId]);
   userBackupTimers[userId] = setTimeout(() => backupUserToTelegram(userId), USER_BACKUP_DELAY);
 }
 
 async function backupUserToTelegram(userId) {
+  if (datastore.USE_DB) return;
   try {
     const data = loadUsers();
     if (!data[userId]) return;
@@ -62,6 +65,7 @@ async function backupUserToTelegram(userId) {
 }
 
 async function restoreUserFromTelegram(userId) {
+  if (datastore.USE_DB) return false;
   try {
     const chatRes = await fetch(`${API_BASE}/getChat`, {
       method: 'POST',
@@ -98,12 +102,14 @@ async function restoreUserFromTelegram(userId) {
 }
 
 function scheduleSyncToCloud() {
+  if (datastore.USE_DB) return; // DB is the source of truth — no Telegram central backup
   if (!config.botToken || !config.syncChatId) return;
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => syncToCloud(), SYNC_DELAY);
 }
 
 async function syncToCloud() {
+  if (datastore.USE_DB) return 'db mode';
   if (!config.botToken || !config.syncChatId) {
     return 'no config';
   }
@@ -159,6 +165,7 @@ async function syncToCloud() {
 
 // ─── Pull data from Telegram on startup ─────────────────────
 async function pullFromCloud() {
+  if (datastore.USE_DB) return; // DB is the source of truth — nothing to pull from Telegram
   if (!config.botToken) return;
 
   // 1. Try central backup first (if SYNC_CHAT_ID is configured)
@@ -215,7 +222,7 @@ async function pullFromCloud() {
 
 // ─── Known-users registry (survives a users.json reset) ───────
 function loadKnownUsers() {
-  const ids = loadJSON(KNOWN_USERS_FILE, []);
+  const ids = datastore.read('known_users', []);
   return Array.isArray(ids) ? ids.map(String) : [];
 }
 
@@ -225,7 +232,7 @@ function registerKnownUser(userId) {
   const ids = loadKnownUsers();
   if (!ids.includes(id)) {
     ids.push(id);
-    fs.writeFileSync(KNOWN_USERS_FILE, JSON.stringify(ids, null, 2), 'utf8');
+    datastore.write('known_users', ids);
   }
 }
 
@@ -242,13 +249,18 @@ function saveJSON(file, data) {
 
 // ─── Foods DB (shared) ────────────────────────────────────
 function loadFoods() {
-  const foods = loadJSON(FOODS_FILE, null);
+  const foods = datastore.read('foods', null);
   if (foods === null) {
     // First run - seed with initial foods
-    saveJSON(FOODS_FILE, INITIAL_FOODS);
+    saveFoods(INITIAL_FOODS);
     return { ...INITIAL_FOODS };
   }
   return foods;
+}
+
+function saveFoods(foods) {
+  datastore.write('foods', foods);
+  scheduleSyncToCloud();
 }
 
 function _parseFoodEntry(data) {
@@ -294,24 +306,24 @@ function addFood(name, portions) {
   } else {
     foods[name] = { carbs: portions, fat: 0, protein: 0 };
   }
-  saveJSON(FOODS_FILE, foods);
+  saveFoods(foods);
 }
 
 function deleteFood(name) {
   const foods = loadFoods();
   if (!(name in foods)) return false;
   delete foods[name];
-  saveJSON(FOODS_FILE, foods);
+  saveFoods(foods);
   return true;
 }
 
 // ─── Users ────────────────────────────────────────────────
 function loadUsers() {
-  return loadJSON(USERS_FILE);
+  return datastore.read('users', {});
 }
 
 function saveUsers(data) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2), 'utf8');
+  datastore.write('users', data);
   scheduleSyncToCloud();
   for (const uid of Object.keys(data)) {
     registerKnownUser(uid);
@@ -586,15 +598,16 @@ function getAllUsersWaterStatus() {
 
 // ─── Groups (for scheduled messages) ─────────────────────
 function saveGroup(chatId) {
-  const groups = loadJSON(GROUPS_FILE, []);
+  const groups = datastore.read('groups', []);
   if (!groups.includes(chatId)) {
     groups.push(chatId);
-    saveJSON(GROUPS_FILE, groups);
+    datastore.write('groups', groups);
+    scheduleSyncToCloud();
   }
 }
 
 function getGroups() {
-  return loadJSON(GROUPS_FILE, []);
+  return datastore.read('groups', []);
 }
 
 // ─── Period reports (weekly / monthly) ───────────────────
