@@ -741,20 +741,43 @@ bot.on('text', (ctx) => {
     return;
   }
 
-  // Check if waiting for portions for new food
+  // Logging a NEW (unknown) food while eating: ask carbs → fat → protein,
+  // save it to the database, then log it to today's count.
   if (userStates[userId]?.action === 'add_food_portions') {
-    const portions = parseFloat(text);
-    if (isNaN(portions) || portions < 0 || portions > 50) {
+    const carbs = parseFloat(text);
+    if (isNaN(carbs) || carbs < 0 || carbs > 50) {
       ctx.reply('❌ שלח מספר מנות תקין (0-50)');
       return;
     }
-    const foodName = userStates[userId].foodName;
-    const quantity = userStates[userId].quantity;
-    storage.addFood(foodName, portions);
-    delete userStates[userId];
+    const { foodName, quantity } = userStates[userId];
+    userStates[userId] = { action: 'add_food_log_fat', foodName, quantity, carbs };
+    ctx.reply(`🧈 כמה נקודות שומן ב"${foodName}"? (שלח מספר, או 0 אם אין)`);
+    return;
+  }
 
-    // Now add it to today's count
-    const totalPortions = portions * quantity;
+  if (userStates[userId]?.action === 'add_food_log_fat') {
+    const fat = parseFloat(text);
+    if (isNaN(fat) || fat < 0 || fat > 50) {
+      ctx.reply('❌ שלח מספר שומן תקין (0-50), או 0');
+      return;
+    }
+    const { foodName, quantity, carbs } = userStates[userId];
+    userStates[userId] = { action: 'add_food_log_protein', foodName, quantity, carbs, fat };
+    ctx.reply(`💪 כמה גרם חלבון ב"${foodName}"? (שלח מספר, או 0)`);
+    return;
+  }
+
+  if (userStates[userId]?.action === 'add_food_log_protein') {
+    const protein = parseFloat(text);
+    if (isNaN(protein) || protein < 0 || protein > 200) {
+      ctx.reply('❌ שלח מספר חלבון תקין (0-200), או 0');
+      return;
+    }
+    const { foodName, quantity, carbs, fat } = userStates[userId];
+    storage.addFood(foodName, carbs, fat, protein);
+
+    // Now log it to today's count
+    const totalPortions = carbs * quantity;
     const status = storage.getTodayStatus(userId);
 
     // Over-limit warning
@@ -769,9 +792,10 @@ bot.on('text', (ctx) => {
     }
 
     storage.addPortions(userId, foodName, totalPortions);
+    delete userStates[userId];
     const newStatus = storage.getTodayStatus(userId);
     ctx.reply(
-      `✅ נוסף: ${foodName} = ${portions} מנות (שמרתי למאגר)\n` +
+      `✅ נוסף: ${foodName} = ${carbs} מנות (שמרתי למאגר)\n` +
       formatQuickStatus(newStatus)
     );
     return;
