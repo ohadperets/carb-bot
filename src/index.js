@@ -886,8 +886,9 @@ bot.on('text', (ctx) => {
 
     storage.addPortions(userId, food.name, totalPortions, quantity);
     const newStatus = storage.getTodayStatus(userId);
+    const fatPts = Math.round((food.fat || 0) * quantity * 10) / 10;
     ctx.reply(
-      `✅ ${quantity > 1 ? quantity + ' × ' : ''}${food.name} = ${totalPortions} מנות\n` +
+      `✅ ${quantity > 1 ? quantity + ' × ' : ''}${food.name} = ${totalPortions} מנות פחמימה, ${fatPts} מנות שומן\n` +
       formatQuickStatus(newStatus)
     );
 
@@ -942,8 +943,9 @@ bot.action('match_yes', (ctx) => {
 
   storage.addPortions(userId, food.name, totalPortions, quantity);
   const newStatus = storage.getTodayStatus(userId);
+  const fatPts = Math.round((food.fat || 0) * quantity * 10) / 10;
   ctx.editMessageText(
-    `✅ ${quantity > 1 ? quantity + ' × ' : ''}${food.name} = ${totalPortions} מנות\n` +
+    `✅ ${quantity > 1 ? quantity + ' × ' : ''}${food.name} = ${totalPortions} מנות פחמימה, ${fatPts} מנות שומן\n` +
     formatQuickStatus(newStatus),
     { reply_markup: undefined }
   );
