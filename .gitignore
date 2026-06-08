@@ -5,5 +5,7 @@ node_modules/
 data-test/
 dashboard.html
 
-# User data — contains personal food logs and OAuth tokens
-data/users.json
+# Runtime data — personal food logs, OAuth tokens, custom foods.
+# Persisted locally + backed up to Telegram (backup.json). Never tracked in git,
+# otherwise `git pull` overwrites/erases live data.
+data/*.json

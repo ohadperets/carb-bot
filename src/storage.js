@@ -182,7 +182,7 @@ async function pullFromCloud() {
             const downloadRes = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${fileInfo.file_path}`);
             if (downloadRes.ok) {
               const data = await downloadRes.json();
-              const mapping = { users: 'users.json', groups: 'groups.json' };
+              const mapping = { foods: 'foods.json', users: 'users.json', groups: 'groups.json' };
               for (const [key, file] of Object.entries(mapping)) {
                 if (data[key]) {
                   const localPath = path.join(config.dataDir, file);
