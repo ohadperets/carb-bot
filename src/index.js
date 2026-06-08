@@ -7,6 +7,7 @@ const config = require('./config');
 const storage = require('./storage');
 const datastore = require('./datastore');
 const { seedIfEmpty } = require('./seed');
+const { mergeExtraFoods } = require('./extra-foods');
 const { generateHTML } = require('./dashboard');
 
 
@@ -1531,6 +1532,9 @@ async function start() {
 
   // First Railway deploy with an empty DB → import the bundled seed data once.
   await seedIfEmpty();
+
+  // Merge any new bundled foods into the live DB (idempotent — adds only what's missing).
+  await mergeExtraFoods();
 
   // Pull data from cloud on fresh deploy (central backup + per-user backups)
   await storage.pullFromCloud();
