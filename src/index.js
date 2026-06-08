@@ -1057,7 +1057,7 @@ function formatStatus(firstName, status) {
     status.entries.forEach((e) => {
       const f = (n) => parseFloat((n || 0).toFixed(1));
       msg += `  ${e.time} • ${e.item}`;
-      msg += `  (פחמימה: ${f(e.portions)},  שומן: ${f(e.fat)}, חלבון: ${f(e.protein)})\n`;
+      msg += `  (${f(e.portions)} נק' פ, ${f(e.fat)} נק' ש, ${f(e.protein)} גרם ח')\n`;
     });
   }
 
