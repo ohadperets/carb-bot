@@ -787,11 +787,11 @@ bot.on('text', (ctx) => {
         `⚠️ אזהרה! אם תאכל ${quantity > 1 ? quantity + ' ' : ''}${foodName} (${totalPortions} מנות) תגיע ל-${willBe}/${status.limit} מנות!\n\n` +
         `להוסיף בכל זאת? שלח "כן" או "לא"`
       );
-      userStates[userId] = { action: 'confirm_over', foodName, portions: totalPortions };
+      userStates[userId] = { action: 'confirm_over', foodName, portions: totalPortions, quantity };
       return;
     }
 
-    storage.addPortions(userId, foodName, totalPortions);
+    storage.addPortions(userId, foodName, totalPortions, quantity);
     delete userStates[userId];
     const newStatus = storage.getTodayStatus(userId);
     ctx.reply(
@@ -804,8 +804,8 @@ bot.on('text', (ctx) => {
   // Check if confirming over-limit
   if (userStates[userId]?.action === 'confirm_over') {
     if (text === 'כן' || text.toLowerCase() === 'yes' || text === 'כ') {
-      const { foodName, portions } = userStates[userId];
-      storage.addPortions(userId, foodName, portions);
+      const { foodName, portions, quantity } = userStates[userId];
+      storage.addPortions(userId, foodName, portions, quantity);
       const newStatus = storage.getTodayStatus(userId);
       delete userStates[userId];
       ctx.reply(`✅ נוסף: ${foodName} (${portions} מנות)\n` + formatQuickStatus(newStatus));
@@ -880,11 +880,11 @@ bot.on('text', (ctx) => {
         `אתה על ${status.total}/${status.limit}, תגיע ל-${willBe}!\n\n` +
         `להוסיף בכל זאת? שלח "כן" או "לא"`
       );
-      userStates[userId] = { action: 'confirm_over', foodName: food.name, portions: totalPortions };
+      userStates[userId] = { action: 'confirm_over', foodName: food.name, portions: totalPortions, quantity };
       return;
     }
 
-    storage.addPortions(userId, food.name, totalPortions);
+    storage.addPortions(userId, food.name, totalPortions, quantity);
     const newStatus = storage.getTodayStatus(userId);
     ctx.reply(
       `✅ ${quantity > 1 ? quantity + ' × ' : ''}${food.name} = ${totalPortions} מנות\n` +
@@ -936,11 +936,11 @@ bot.action('match_yes', (ctx) => {
       `אתה על ${status.total}/${status.limit}, תגיע ל-${willBe}!\n\nלהוסיף בכל זאת? שלח "כן" או "לא"`,
       { reply_markup: undefined }
     );
-    userStates[userId] = { action: 'confirm_over', foodName: food.name, portions: totalPortions };
+    userStates[userId] = { action: 'confirm_over', foodName: food.name, portions: totalPortions, quantity };
     return;
   }
 
-  storage.addPortions(userId, food.name, totalPortions);
+  storage.addPortions(userId, food.name, totalPortions, quantity);
   const newStatus = storage.getTodayStatus(userId);
   ctx.editMessageText(
     `✅ ${quantity > 1 ? quantity + ' × ' : ''}${food.name} = ${totalPortions} מנות\n` +
@@ -1057,7 +1057,7 @@ function formatStatus(firstName, status) {
     status.entries.forEach((e) => {
       const f = (n) => parseFloat((n || 0).toFixed(1));
       msg += `  ${e.time} • ${e.item}`;
-      msg += `  (${f(e.portions)} נק' פ, ${f(e.fat)} נק' ש, ${f(e.protein)} גרם ח')\n`;
+      msg += `  (${f(e.portions)} נק' פ, ${f(e.fat)} נק' ש)\n`;
     });
   }
 

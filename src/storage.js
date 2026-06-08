@@ -366,6 +366,11 @@ function setWeight(userId, kg) {
 function enrichEntries(entries) {
   const foods = loadFoods();
   return entries.map(entry => {
+    // Prefer the snapshot captured on the entry at log time — it is stable and
+    // immune to later food edits / partial-match lookups.
+    if (entry.fat !== undefined && entry.protein !== undefined) {
+      return { ...entry, fat: entry.fat, protein: entry.protein };
+    }
     const food = foods[entry.item];
     if (!food || typeof food !== 'object') {
       return { ...entry, fat: 0, protein: 0 };
@@ -397,7 +402,7 @@ function getTodayKey() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
-function addPortions(userId, itemName, portions) {
+function addPortions(userId, itemName, portions, quantity) {
   const data = loadUsers();
   const user = data[userId];
   if (!user) return null;
@@ -412,6 +417,21 @@ function addPortions(userId, itemName, portions) {
     portions,
     time: new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' }),
   };
+
+  // Snapshot fat + protein at log time from the foods database so the daily
+  // totals always count them (even for zero-carb foods) and stay stable if the
+  // food is later edited. `quantity` = number of servings eaten; when omitted
+  // we recover it from portions / carbs.
+  const foods = loadFoods();
+  const food = foods[itemName];
+  if (food && typeof food === 'object') {
+    const carbs = food.carbs || 0;
+    const qty = (quantity !== undefined && quantity !== null)
+      ? quantity
+      : (carbs > 0 ? portions / carbs : 1);
+    entry.fat     = Math.round((food.fat     || 0) * qty * 10) / 10;
+    entry.protein = Math.round((food.protein || 0) * qty * 10) / 10;
+  }
 
   user.days[today].entries.push(entry);
   user.days[today].total += portions;
