@@ -857,6 +857,57 @@ bot.on('text', (ctx) => {
     return;
   }
 
+  // ─── Batch logging: several foods ending with "ביחד" ────
+  // Example:
+  //   ביצה
+  //   2 הפוך
+  //   פיתה
+  //   ביחד
+  // or single line: "ביצה, 2 הפוך, פיתה ביחד"
+  if (/(^|[\s,;\n])ביחד\s*$/.test(text)) {
+    const body  = text.replace(/(^|[\s,;\n])ביחד\s*$/, '').trim();
+    const items = body.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+
+    if (items.length === 0) {
+      ctx.reply(
+        '🍽️ שלח רשימת מאכלים (כל אחד בשורה או מופרד בפסיק) ואז "ביחד".\n' +
+        'למשל:\nביצה\n2 הפוך\nפיתה\nביחד'
+      );
+      return;
+    }
+
+    const added    = [];
+    const notFound = [];
+    for (const item of items) {
+      const { quantity: qty, foodName: name } = parseInput(item);
+      const f = storage.findFood(name);
+      if (f && (f.matchType === 'exact' || f.matchType === 'partial')) {
+        const portions = f.portions * qty;
+        storage.addPortions(userId, f.name, portions, qty);
+        added.push({ name: f.name, quantity: qty, portions });
+      } else {
+        notFound.push(item);
+      }
+    }
+
+    const newStatus = storage.getTodayStatus(userId);
+    let msg = '';
+    if (added.length > 0) {
+      msg += `✅ נוספו ${added.length} מאכלים ביחד:\n`;
+      added.forEach((a) => {
+        msg += `  • ${a.quantity > 1 ? a.quantity + ' × ' : ''}${a.name} = ${a.portions} מנות\n`;
+      });
+    } else {
+      msg += 'לא זוהה אף מאכל מהרשימה.\n';
+    }
+    if (notFound.length > 0) {
+      msg += `\n⚠️ לא זוהו (הוסף ידנית): ${notFound.join(', ')}\n`;
+    }
+    msg += '\n' + formatQuickStatus(newStatus);
+    ctx.reply(msg);
+    return;
+  }
+
   // ─── Parse food input ─────────────────────────────────
   const { quantity, foodName } = parseInput(text);
 
@@ -1060,7 +1111,7 @@ function formatStatus(firstName, status) {
     status.entries.forEach((e) => {
       const f = (n) => parseFloat((n || 0).toFixed(1));
       msg += `  ${e.time} • ${e.item}`;
-      msg += `  (${f(e.portions)} נק' פ, ${f(e.fat)} נק' ש)\n`;
+      msg += `  (${f(e.portions)} נק' פ, ${f(e.fat)} נק' ש, ${f(e.protein)} חל)\n`;
     });
   }
 
