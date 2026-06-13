@@ -857,22 +857,28 @@ bot.on('text', (ctx) => {
     return;
   }
 
-  // ─── Batch logging: several foods ending with "ביחד" ────
-  // Example:
-  //   ביצה
-  //   2 הפוך
-  //   פיתה
-  //   ביחד
-  // or single line: "ביצה, 2 הפוך, פיתה ביחד"
+  // ─── Shared logging: food(s) ending with "ביחד" count for EVERYONE ──
+  // "ביחד" = together. The food is logged for every registered user
+  // (all group members), not just the sender.
+  // Examples:
+  //   "פיתה ביחד"            → log פיתה for all users
+  //   "ביצה, 2 הפוך, פיתה ביחד" → log all three for all users
   if (/(^|[\s,;\n])ביחד\s*$/.test(text)) {
     const body  = text.replace(/(^|[\s,;\n])ביחד\s*$/, '').trim();
     const items = body.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
 
     if (items.length === 0) {
       ctx.reply(
-        '🍽️ שלח רשימת מאכלים (כל אחד בשורה או מופרד בפסיק) ואז "ביחד".\n' +
-        'למשל:\nביצה\n2 הפוך\nפיתה\nביחד'
+        '🍽️ שלח מאכל (או רשימה) ואז "ביחד" כדי לרשום לכל חברי הקבוצה.\n' +
+        'למשל: "פיתה ביחד"'
       );
+      return;
+    }
+
+    const allUsers = storage.loadUsers();
+    const userIds  = Object.keys(allUsers);
+    if (userIds.length === 0) {
+      ctx.reply('❌ אין משתמשים רשומים.');
       return;
     }
 
@@ -883,17 +889,19 @@ bot.on('text', (ctx) => {
       const f = storage.findFood(name);
       if (f && (f.matchType === 'exact' || f.matchType === 'partial')) {
         const portions = f.portions * qty;
-        storage.addPortions(userId, f.name, portions, qty);
+        for (const uid of userIds) {
+          storage.addPortions(uid, f.name, portions, qty);
+        }
         added.push({ name: f.name, quantity: qty, portions });
       } else {
         notFound.push(item);
       }
     }
 
-    const newStatus = storage.getTodayStatus(userId);
     let msg = '';
     if (added.length > 0) {
-      msg += `✅ נוספו ${added.length} מאכלים ביחד:\n`;
+      const names = userIds.map((uid) => allUsers[uid].firstName || uid).join(', ');
+      msg += `✅ נרשם לכולם (${names}):\n`;
       added.forEach((a) => {
         msg += `  • ${a.quantity > 1 ? a.quantity + ' × ' : ''}${a.name} = ${a.portions} מנות\n`;
       });
@@ -903,7 +911,7 @@ bot.on('text', (ctx) => {
     if (notFound.length > 0) {
       msg += `\n⚠️ לא זוהו (הוסף ידנית): ${notFound.join(', ')}\n`;
     }
-    msg += '\n' + formatQuickStatus(newStatus);
+    msg += '\n' + formatQuickStatus(storage.getTodayStatus(userId));
     ctx.reply(msg);
     return;
   }
