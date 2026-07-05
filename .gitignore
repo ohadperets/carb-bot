@@ -9,3 +9,5 @@ dashboard.html
 # Persisted locally + backed up to Telegram (backup.json). Never tracked in git,
 # otherwise `git pull` overwrites/erases live data.
 data/*.json
+
+.expo/
