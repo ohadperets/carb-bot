@@ -298,10 +298,12 @@ bot.command('edit', (ctx) => {
   if (status.entries.length > 0) {
     msg += '🍞 רשומות פחמימות היום:\n';
     status.entries.forEach((e, i) => {
-      msg += `${i + 1}. ${e.time} • ${e.item} (${e.portions} מנות)\n`;
+      const f = (n) => parseFloat((n || 0).toFixed(1));
+      msg += `${i + 1}. ${e.time} • ${e.item} (🍞${f(e.portions)} 🧈${f(e.fat)} 💪${f(e.protein)}ג׳)\n`;
     });
     msg += '\nשלח מספר למחיקה 🗑️\n';
-    msg += 'או "מספר מנות_חדשות" לעריכה (למשל: "2 3")\n';
+    msg += 'או "מספר פחמימות" לעדכון פחמימות (למשל: "2 3")\n';
+    msg += 'או "מספר פחמימות שומן חלבון" לעריכה מלאה (למשל: "2 3 1 20")\n';
   } else {
     msg += '🍞 אין רשומות פחמימות היום.\n';
   }
@@ -418,8 +420,8 @@ bot.command('editfood', (ctx) => {
 
   userStates[ctx.from.id] = { action: 'edit_food_value', foodName: food.name };
   ctx.reply(
-    `📝 "${food.name}" = ${food.portions} מנות\n\n` +
-    `שלח מספר חדש לעדכון, או "מחק" למחיקה:`
+    `📝 "${food.name}": 🍞 ${food.carbs} פחמימות · 🧈 ${food.fat} שומן · 💪 ${food.protein}ג׳ חלבון\n\n` +
+    `שלח "פחמימות" או "פחמימות שומן חלבון" לעדכון (למשל "2 1 15"), או "מחק" למחיקה:`
   );
 });
 
@@ -621,6 +623,17 @@ bot.on('text', (ctx) => {
     return;
   }
 
+  // "סלט" opens the salad builder
+  if (text === 'סלט') {
+    const user = storage.getUser(userId);
+    if (!user) {
+      ctx.reply('שלח /start כדי להתחיל.');
+      return;
+    }
+    showSaladPicker(ctx);
+    return;
+  }
+
   // Check if user is registered
   const user = storage.getUser(userId);
   if (!user) {
@@ -672,8 +685,8 @@ bot.on('text', (ctx) => {
     }
     userStates[userId] = { action: 'edit_food_value', foodName: food.name };
     ctx.reply(
-      `📝 "${food.name}" = ${food.portions} מנות\n\n` +
-      `שלח מספר חדש לעדכון, או "מחק" למחיקה:`
+      `📝 "${food.name}": 🍞 ${food.carbs} פחמימות · 🧈 ${food.fat} שומן · 💪 ${food.protein}ג׳ חלבון\n\n` +
+      `שלח "פחמימות" או "פחמימות שומן חלבון" לעדכון (למשל "2 1 15"), או "מחק" למחיקה:`
     );
     return;
   }
@@ -687,14 +700,34 @@ bot.on('text', (ctx) => {
       ctx.reply(`🗑️ "${foodName}" נמחק מהמאגר.`);
       return;
     }
-    const newPortions = parseFloat(text);
-    if (isNaN(newPortions) || newPortions < 0 || newPortions > 50) {
-      ctx.reply('❌ שלח מספר מנות תקין (0-50) או "מחק"');
+    const parts = text.split(/\s+/);
+    const carbs = parseFloat(parts[0]);
+    if (isNaN(carbs) || carbs < 0 || carbs > 50) {
+      ctx.reply('❌ שלח מספר פחמימות תקין (0-50) או "מחק"');
       return;
     }
-    storage.addFood(foodName, newPortions);
+    let fat, protein;
+    if (parts.length >= 2) {
+      fat = parseFloat(parts[1]);
+      if (isNaN(fat) || fat < 0 || fat > 50) {
+        ctx.reply('❌ שלח מספר שומן תקין (0-50)');
+        return;
+      }
+    }
+    if (parts.length >= 3) {
+      protein = parseFloat(parts[2]);
+      if (isNaN(protein) || protein < 0 || protein > 200) {
+        ctx.reply('❌ שלח מספר חלבון תקין (0-200)');
+        return;
+      }
+    }
+    storage.addFood(foodName, carbs, fat, protein);
     delete userStates[userId];
-    ctx.reply(`✅ "${foodName}" עודכן ל-${newPortions} מנות.`);
+    const updated = storage.findFood(foodName);
+    ctx.reply(
+      `✅ "${foodName}" עודכן:\n` +
+      `🍞 ${updated.carbs} פחמימות · 🧈 ${updated.fat} שומן · 💪 ${updated.protein}ג׳ חלבון`
+    );
     return;
   }
 
@@ -829,17 +862,38 @@ bot.on('text', (ctx) => {
     }
 
     if (parts.length >= 2) {
-      // Edit: "2 3" = change entry 2 to 3 portions
+      // Edit: "2 3" = change entry 2 to 3 portions.
+      // Optional fat & protein: "2 3 1 20" = 3 carbs, 1 fat, 20g protein.
       const newPortions = parseFloat(parts[1]);
       if (isNaN(newPortions) || newPortions < 0 || newPortions > 50) {
         ctx.reply('❌ מספר מנות לא תקין');
         return;
       }
-      const edited = storage.editEntry(userId, index, newPortions);
+      let newFat, newProtein;
+      if (parts.length >= 3) {
+        newFat = parseFloat(parts[2]);
+        if (isNaN(newFat) || newFat < 0 || newFat > 50) {
+          ctx.reply('❌ מספר שומן לא תקין (0-50)');
+          return;
+        }
+      }
+      if (parts.length >= 4) {
+        newProtein = parseFloat(parts[3]);
+        if (isNaN(newProtein) || newProtein < 0 || newProtein > 200) {
+          ctx.reply('❌ מספר חלבון לא תקין (0-200)');
+          return;
+        }
+      }
+      const edited = storage.editEntry(userId, index, newPortions, newFat, newProtein);
       delete userStates[userId];
       if (edited) {
         const newStatus = storage.getTodayStatus(userId);
-        ctx.reply(`✏️ עודכן: ${edited.item} → ${newPortions} מנות\n` + formatQuickStatus(newStatus));
+        const f = (n) => parseFloat((n || 0).toFixed(1));
+        ctx.reply(
+          `✏️ עודכן: ${edited.item}\n` +
+          `🍞 ${f(edited.portions)} פחמימות · 🧈 ${f(edited.fat)} שומן · 💪 ${f(edited.protein)}ג׳ חלבון\n` +
+          formatQuickStatus(newStatus)
+        );
       } else {
         ctx.reply('❌ שגיאה בעדכון');
       }
@@ -1044,26 +1098,83 @@ function saladKeyboard() {
   return Markup.inlineKeyboard(rows);
 }
 
+// Per-user salad building sessions (kept separate from userStates so text
+// logging keeps working while a salad is being assembled via buttons).
+const saladSessions = {};   // userId -> { ingredients: [{ name, carbs, fat, protein }] }
+const lastSalad     = {};   // userId -> { name, carbs, fat, protein }  (for optional save)
+
 function showSaladPicker(ctx) {
-  ctx.reply('🥗 בחר/י מרכיבי הסלט — לחץ/י להוסיף:', saladKeyboard());
+  saladSessions[ctx.from.id] = { ingredients: [] };
+  ctx.reply('🥗 בחר/י מרכיבי הסלט — לחץ/י להוסיף, ואז "✅ סיימתי":', saladKeyboard());
 }
 
 bot.action(/^salad_add:(.+)$/, (ctx) => {
-  const userId    = ctx.from.id;
-  const itemName  = ctx.match[1];
-  const food      = storage.findFood(itemName);
-  const portions  = food ? food.portions : 0;
+  const userId   = ctx.from.id;
+  const itemName = ctx.match[1];
+  if (!saladSessions[userId]) saladSessions[userId] = { ingredients: [] };
 
-  storage.addPortions(userId, food ? food.name : itemName, portions);
-  ctx.answerCbQuery(`✅ ${itemName} נוסף`);
+  const food = storage.findFood(itemName);
+  saladSessions[userId].ingredients.push({
+    name:    food ? food.name : itemName,
+    carbs:   food ? food.carbs   : 0,
+    fat:     food ? food.fat     : 0,
+    protein: food ? food.protein : 0,
+  });
+
+  const count = saladSessions[userId].ingredients.length;
+  ctx.answerCbQuery(`✅ ${itemName} (${count} מרכיבים)`);
 });
 
 bot.action('salad_done', (ctx) => {
-  const userId = ctx.from.id;
+  const userId  = ctx.from.id;
+  const session = saladSessions[userId];
+
+  if (!session || session.ingredients.length === 0) {
+    ctx.answerCbQuery('לא נבחרו מרכיבים');
+    ctx.editMessageText('🥗 לא נבחרו מרכיבים לסלט.', { reply_markup: undefined });
+    delete saladSessions[userId];
+    return;
+  }
+
+  const totals = session.ingredients.reduce(
+    (acc, i) => ({ carbs: acc.carbs + i.carbs, fat: acc.fat + i.fat, protein: acc.protein + i.protein }),
+    { carbs: 0, fat: 0, protein: 0 },
+  );
+  const carbs   = Math.round(totals.carbs   * 10) / 10;
+  const fat     = Math.round(totals.fat     * 10) / 10;
+  const protein = Math.round(totals.protein * 10) / 10;
+  const names   = session.ingredients.map(i => i.name).join(', ');
+  const item    = `סלט: ${names}`;
+
+  // Save the whole salad as ONE dish entry so it shows up in the dashboard.
+  storage.addEntryWithMacros(userId, item, carbs, fat, protein);
+  lastSalad[userId] = { name: item, carbs, fat, protein };
+  delete saladSessions[userId];
+
   const status = storage.getTodayStatus(userId);
   ctx.answerCbQuery('✅ סלט נשמר');
   ctx.editMessageText(
-    `🥗 הסלט נשמר!\n${formatQuickStatus(status)}`,
+    `🥗 הסלט נשמר כמנה!\n` +
+    `🍞 ${carbs} פחמימות · 🧈 ${fat} שומן · 💪 ${protein}ג׳ חלבון\n` +
+    formatQuickStatus(status),
+    Markup.inlineKeyboard([[ Markup.button.callback('💾 שמור סלט זה למאגר', 'salad_save') ]])
+  );
+});
+
+bot.action('salad_save', (ctx) => {
+  const userId = ctx.from.id;
+  const salad  = lastSalad[userId];
+  if (!salad) {
+    ctx.answerCbQuery('אין סלט לשמירה');
+    return;
+  }
+  storage.addFood(salad.name, salad.carbs, salad.fat, salad.protein);
+  delete lastSalad[userId];
+  ctx.answerCbQuery('💾 נשמר למאגר');
+  ctx.editMessageText(
+    `💾 "${salad.name}" נשמר למאגר המאכלים!\n` +
+    `עכשיו אפשר להוסיף אותו שוב פשוט ע"י שליחת השם.\n` +
+    `🍞 ${salad.carbs} פחמימות · 🧈 ${salad.fat} שומן · 💪 ${salad.protein}ג׳ חלבון`,
     { reply_markup: undefined }
   );
 });

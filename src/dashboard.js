@@ -22,6 +22,11 @@ function shortDay(iso) {
   return HE_DAYS[new Date(iso + 'T12:00:00').getDay()];
 }
 
+function shortDate(iso) {
+  const [, m, d] = iso.split('-');
+  return `${d}/${m}`;
+}
+
 const FAT_LIMIT = 8;
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
@@ -39,6 +44,23 @@ function computeDayNutrition(entries, foods) {
   return {
     fatTotal:     Math.round(fatTotal     * 10) / 10,
     proteinTotal: Math.round(proteinTotal * 10) / 10,
+  };
+}
+
+// Per-entry fat/protein. Prefers the snapshot stored on the entry at log time
+// (stable + works for composite dishes like salads); falls back to the foods DB.
+function enrichEntry(entry, foods) {
+  if (entry.fat !== undefined && entry.protein !== undefined) {
+    return { ...entry, fat: entry.fat, protein: entry.protein };
+  }
+  const food = foods[entry.item];
+  if (!food || typeof food !== 'object') return { ...entry, fat: 0, protein: 0 };
+  const carbs    = food.carbs || 0;
+  const quantity = carbs > 0 ? entry.portions / carbs : 1;
+  return {
+    ...entry,
+    fat:     Math.round((food.fat     || 0) * quantity * 10) / 10,
+    protein: Math.round((food.protein || 0) * quantity * 10) / 10,
   };
 }
 
@@ -157,6 +179,18 @@ function computeStats(usersData, foods) {
     const weekFatOk    = week.filter(d  => d.active && d.fatInLimit).length;
     const weekProtMet  = week.filter(d  => d.active && d.proteinMet).length;
 
+    // All food eaten in the last 30 days, newest first (top → bottom).
+    const recentEntries = [];
+    for (let i = month.length - 1; i >= 0; i--) {
+      const day = month[i];
+      const enriched = (day.entries || [])
+        .map(e => enrichEntry(e, foodsMap))
+        .sort((a, b) => (b.time || '').localeCompare(a.time || ''));
+      for (const e of enriched) {
+        recentEntries.push({ date: day.date, ...e });
+      }
+    }
+
     return {
       userId,
       firstName:   user.firstName || 'משתמש',
@@ -176,6 +210,7 @@ function computeStats(usersData, foods) {
       monthCarbSuccess, monthWaterSuccess, monthActiveCount,
       weekFatOk,   weekProtMet,
       topFoods,
+      recentEntries,
       recs: buildRecs({ todayStat, week, dailyLimit: user.dailyLimit, waterLimit: user.waterLimit || 2000, carbStreak, waterStreak, avgCarbsWeek, avgWaterWeek, weekCarbSuccess, weekActiveCount }),
     };
   });
@@ -248,6 +283,12 @@ function userSection(s, today) {
   const logRows = t.entries.length
     ? t.entries.map((e, i) => `<tr><td class="rank">${i + 1}</td><td class="time">${e.time || ''}</td><td>${e.item}</td><td class="num">${e.portions}</td></tr>`).join('')
     : '<tr><td colspan="4" class="empty">אין רשומות להיום</td></tr>';
+
+  const historyRows = s.recentEntries.length
+    ? s.recentEntries.map(e =>
+        `<tr><td class="time">${shortDate(e.date)} ${e.time || ''}</td><td>${e.item}</td><td class="num">🍞${e.portions}</td><td class="num">🧈${e.fat}</td><td class="num">💪${e.protein}ג׳</td></tr>`
+      ).join('')
+    : '<tr><td colspan="5" class="empty">לא נרשם מזון ב-30 הימים האחרונים</td></tr>';
 
   const fatCard = `
 <div class="stat-card ${fatColor}">
@@ -363,6 +404,14 @@ function userSection(s, today) {
         <tbody>${logRows}</tbody>
       </table>
     </div>
+  </div>
+
+  <div class="section-label">כל המזון — 30 ימים אחרונים</div>
+  <div class="history-wrap">
+    <table class="dtable">
+      <thead><tr><th>תאריך ושעה</th><th>מאכל</th><th>פחמימות</th><th>שומן</th><th>חלבון</th></tr></thead>
+      <tbody>${historyRows}</tbody>
+    </table>
   </div>
 </section>`;
 }
@@ -488,6 +537,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Noto Sans H
 .dtable .num{color:#6366f1;font-weight:700;direction:ltr;text-align:left}
 .dtable .time{color:#94a3b8;font-size:.78rem;direction:ltr;text-align:center}
 .dtable .empty{text-align:center;color:#94a3b8;padding:16px;font-style:italic}
+.history-wrap{max-height:440px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:10px}
+.history-wrap .dtable th{position:sticky;top:0;z-index:1}
 footer{text-align:center;color:#94a3b8;font-size:.78rem;padding:16px 0 8px}
 @media(max-width:640px){
   .week-grid{gap:4px}

@@ -440,6 +440,35 @@ function addPortions(userId, itemName, portions, quantity) {
   return user.days[today];
 }
 
+// Log a single composite entry (e.g. a built salad) with explicit macros.
+// Unlike addPortions, the carbs/fat/protein are supplied directly and snapshot
+// onto the entry, so the dish need not exist in the foods database.
+function addEntryWithMacros(userId, itemName, carbs, fat, protein) {
+  const data = loadUsers();
+  const user = data[userId];
+  if (!user) return null;
+
+  const today = getTodayKey();
+  if (!user.days[today]) {
+    user.days[today] = { entries: [], total: 0 };
+  }
+
+  const portions = Math.round((carbs || 0) * 100) / 100;
+  const entry = {
+    item: itemName,
+    portions,
+    fat:     Math.round((fat     || 0) * 10) / 10,
+    protein: Math.round((protein || 0) * 10) / 10,
+    time: new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' }),
+  };
+
+  user.days[today].entries.push(entry);
+  user.days[today].total += portions;
+  saveUsers(data);
+
+  return user.days[today];
+}
+
 const FAT_LIMIT = 8;
 
 function getTodayStatus(userId) {
@@ -519,7 +548,7 @@ function deleteEntry(userId, index) {
   return removed;
 }
 
-function editEntry(userId, index, newPortions) {
+function editEntry(userId, index, newPortions, newFat, newProtein) {
   const data = loadUsers();
   const user = data[userId];
   if (!user) return null;
@@ -531,6 +560,8 @@ function editEntry(userId, index, newPortions) {
   const entry = dayData.entries[index];
   const diff = newPortions - entry.portions;
   entry.portions = newPortions;
+  if (newFat     !== undefined && newFat     !== null) entry.fat     = Math.round(newFat     * 10) / 10;
+  if (newProtein !== undefined && newProtein !== null) entry.protein = Math.round(newProtein * 10) / 10;
   dayData.total += diff;
   saveUsers(data);
   return entry;
@@ -762,6 +793,7 @@ module.exports = {
   setWeight,
   computeDayNutrition,
   addPortions,
+  addEntryWithMacros,
   getTodayStatus,
   getAllUsersStatus,
   setUserLimit,
