@@ -548,6 +548,26 @@ bot.command('stepsgoal', (ctx) => {
   ctx.reply(`✅ יעד הצעדים שונה ל-${goal.toLocaleString()}`);
 });
 
+// ─── /synclink - Get the ready-to-use steps webhook URL ────
+bot.command('synclink', (ctx) => {
+  // Owner-only: the /api/steps endpoint always writes to SYNC_CHAT_ID
+  if (String(ctx.from.id) !== String(config.syncChatId)) {
+    ctx.reply('🔒 הפקודה זמינה רק לבעל הבוט');
+    return;
+  }
+  const key = config.botToken.split(':')[1].slice(0, 16);
+  const origin = new URL(config.googleRedirectUri).origin;
+  const url = `${origin}/api/steps?key=${key}&steps=8000`;
+  ctx.reply(
+    `🔗 קישור סנכרון צעדים אוטומטי\n\n` +
+    `העתק את הכתובת הזו לאפליקציית אוטומציה בטלפון (למשל Tasker / MacroDroid), ` +
+    `והחלף את 8000 במשתנה של מספר הצעדים מ-Health Connect:\n\n` +
+    `\`${url}\`\n\n` +
+    `האפליקציה תשלח את הכתובת (בקשת GET) פעם בשעה, והצעדים יתעדכנו בבוט אוטומטית.`,
+    { parse_mode: 'Markdown' }
+  );
+});
+
 // ─── Water button callbacks ───────────────────────────────
 bot.action(/^water_(\d+)$/, (ctx) => {
   const ml = parseInt(ctx.match[1]);
